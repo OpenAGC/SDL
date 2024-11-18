@@ -35,6 +35,19 @@ typedef struct PS5_PadTouchData
     PS5_PadTouch touch[2];
 } PS5_PadTouchData;
 
+typedef struct PS5_PadColor
+{
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t a;
+} PS5_PadColor;
+
+typedef struct PS5_PadVibration {
+    uint8_t large_motor;
+    uint8_t small_motor;
+} PS5_PadVibration;
+
 typedef struct PS5_PadData
 {
     uint32_t buttons;
@@ -84,7 +97,11 @@ typedef struct PS5_PadData
 int scePadInit(void);
 int scePadOpen(int handle, int, int, void *);
 int scePadReadState(int handle, PS5_PadData *data);
+int scePadSetLightBar(int handle, const PS5_PadColor* color);
+int scePadSetVibrationMode(int handle, int mode);
+int scePadSetVibration(int handle, const PS5_PadVibration* vib);
 int scePadClose(int handle);
 
 int sceUserServiceInitialize(void *);
 int sceUserServiceGetLoginUserIdList(int userId[4]);
+int sceUserServiceGetUserName(int userId, char* name, size_t size);
