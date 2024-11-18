@@ -406,7 +406,7 @@ static int PS5_JoystickRumble(SDL_Joystick *joystick, Uint16 low_frequency_rumbl
     int err;
 
     if (!ctx) {
-        return SDL_SetError("PS5_JoystickSetLED: instance not connected");
+        return SDL_SetError("PS5_JoystickRumble: instance not connected");
     }
 
     err = scePadSetVibration(ctx->handle, &vib);
