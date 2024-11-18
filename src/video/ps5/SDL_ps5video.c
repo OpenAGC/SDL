@@ -339,7 +339,7 @@ static SDL_VideoDevice *PS5_CreateDevice(void)
     return device;
 }
 
-VideoBootStrap PS5_bootstrap = { "PS5", "Sony PS5 Video Driver",
+VideoBootStrap PS5_bootstrap = { "ps5", "Sony PS5 Video Driver",
                                  PS5_CreateDevice };
 
 #endif /* SDL_VIDEO_DRIVER_PS5 */
