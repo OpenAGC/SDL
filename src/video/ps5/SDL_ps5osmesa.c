@@ -28,18 +28,22 @@
 
 static void* osmesa_context = NULL;
 
-static int OSMesa_LoadLibrary(_THIS, const char *path) {
+static int OSMesa_LoadLibrary(_THIS, const char *path)
+{
     return 0;
 }
 
-static void OSMesa_UnloadLibrary(_THIS) {
+static void OSMesa_UnloadLibrary(_THIS)
+{
 }
 
-static void* OSMesa_GetProcAddress(_THIS, const char *proc) {
+static void* OSMesa_GetProcAddress(_THIS, const char *proc)
+{
     return 0; //OSMesaGetProcAddress(proc);
 }
 
-static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context) {
+static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context)
+{
     int height;
     int width;
     void *fb;
@@ -60,7 +64,8 @@ static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context)
     return 0;
 }
 
-static SDL_GLContext OSMesa_CreateContext(_THIS, SDL_Window * window) {
+static SDL_GLContext OSMesa_CreateContext(_THIS, SDL_Window * window)
+{
     void* ctx;
 
     ctx = OSMesaCreateContext(GL_RGBA, NULL);
@@ -76,15 +81,18 @@ static SDL_GLContext OSMesa_CreateContext(_THIS, SDL_Window * window) {
     return (SDL_GLContext)ctx;
 }
 
-static int OSMesa_SetSwapInterval(_THIS, int interval) {
+static int OSMesa_SetSwapInterval(_THIS, int interval)
+{
     return 0;
 }
 
-static int OSMesa_GetSwapInterval(_THIS) {
+static int OSMesa_GetSwapInterval(_THIS)
+{
     return 0;
 }
 
-static int OSMesa_SwapWindow(_THIS, SDL_Window *window) {
+static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
+{
     SDL_Surface *surface;
     int width, height;
     void *buffer;
@@ -130,20 +138,23 @@ static int OSMesa_SwapWindow(_THIS, SDL_Window *window) {
     return 0;
 }
 
-static void OSMesa_DeleteContext(_THIS, SDL_GLContext context) {
+static void OSMesa_DeleteContext(_THIS, SDL_GLContext context)
+{
     if (context) {
         OSMesaDestroyContext(context);
     }
 }
 
-static void OSMesa_DefaultProfileConfig(_THIS, int *mask, int *major, int *minor) {
+static void OSMesa_DefaultProfileConfig(_THIS, int *mask, int *major, int *minor)
+{
     *mask = SDL_GL_CONTEXT_PROFILE_CORE;
     *major = 2;
     *minor = 1;
 }
 
 
-int PS5_OSMesa_InitDevice(SDL_VideoDevice* device) {
+int PS5_OSMesa_InitDevice(SDL_VideoDevice* device)
+{
     device->GL_LoadLibrary = OSMesa_LoadLibrary;
     device->GL_GetProcAddress = OSMesa_GetProcAddress;
     device->GL_UnloadLibrary = OSMesa_UnloadLibrary;
