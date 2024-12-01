@@ -49,13 +49,13 @@ static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context)
     void *fb;
 
     SDL_GetWindowSize(window, &width, &height);
-    fb = malloc(width * height * sizeof(GLubyte) * 4);
+    fb = SDL_malloc(width * height * sizeof(GLubyte) * 4);
     if (!fb) {
         return SDL_SetError("Failed to allocate frame buffer");
     }
 
     if (!OSMesaMakeCurrent(context, fb, GL_UNSIGNED_BYTE, width, height)) {
-        free(fb);
+        SDL_free(fb);
         return SDL_SetError("Failed to make context current");
     }
 
@@ -125,9 +125,9 @@ static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
             int top = (x + y * width) * 4;
             int bottom = (x + (height - y - 1) * width) * 4;
             char rgba[4];
-            memcpy(rgba, buffer + top, sizeof(rgba));
-            memcpy(surface->pixels + top, buffer + bottom, sizeof(rgba));
-            memcpy(surface->pixels + bottom, rgba, sizeof(rgba));
+            SDL_memcpy(rgba, buffer + top, sizeof(rgba));
+            SDL_memcpy(surface->pixels + top, buffer + bottom, sizeof(rgba));
+            SDL_memcpy(surface->pixels + bottom, rgba, sizeof(rgba));
         }
     }
 
