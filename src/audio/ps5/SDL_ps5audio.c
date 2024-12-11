@@ -152,9 +152,13 @@ static void PS5AUDIO_Deinitialize(void)
 
 static SDL_bool PS5AUDIO_Init(SDL_AudioDriverImpl *impl)
 {
-    if (sceAudioOutInit()) {
+    static SDL_bool need_init = SDL_TRUE;
+
+    if (need_init && sceAudioOutInit()) {
         return SDL_FALSE;
     }
+
+    need_init = SDL_FALSE;
 
     impl->ThreadInit = PS5AUDIO_ThreadInit;
     impl->OpenDevice = PS5AUDIO_OpenDevice;
