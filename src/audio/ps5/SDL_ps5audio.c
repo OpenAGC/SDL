@@ -116,7 +116,7 @@ static void PS5AUDIO_PlayDevice(_THIS)
 /* This function waits until it is possible to write a full sound buffer */
 static void PS5AUDIO_WaitDevice(_THIS)
 {
-    sceAudioOutOutput(this->hidden->aout, NULL);
+    //sceAudioOutOutput(this->hidden->aout, NULL);
 }
 
 static Uint8 *PS5AUDIO_GetDeviceBuf(_THIS)
@@ -144,7 +144,6 @@ static void PS5AUDIO_CloseDevice(_THIS)
 static void PS5AUDIO_ThreadInit(_THIS)
 {
 }
-
 
 static void PS5AUDIO_Deinitialize(void)
 {
