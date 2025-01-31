@@ -23,13 +23,9 @@
 #ifndef SDL_ps5gl_h_
 #define SDL_ps5gl_h_
 
-#if SDL_VIDEO_OPENGL_OSMESA
-
 #include "../SDL_sysvideo.h"
 
 int PS5_OSMesa_InitDevice(SDL_VideoDevice* dev);
-
-#endif /* SDL_VIDEO_OPENGL_OSMESA */
 
 #endif /* SDL_ps5gl_h_ */
 

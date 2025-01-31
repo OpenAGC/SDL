@@ -21,8 +21,6 @@
 
 #include "SDL_ps5osmesa.h"
 
-#if SDL_VIDEO_OPENGL_OSMESA
-
 #include <SDL2/SDL_opengl.h>
 #include <dlfcn.h>
 
@@ -203,5 +201,3 @@ int PS5_OSMesa_InitDevice(SDL_VideoDevice* device)
     return 0;
 }
 
-
-#endif
