@@ -21,6 +21,8 @@
 
 #include "SDL_ps5osmesa.h"
 
+#if SDL_VIDEO_OPENGL_OSMESA
+
 #include <SDL2/SDL_opengl.h>
 #include <dlfcn.h>
 
@@ -33,7 +35,7 @@ static void* (*OSMesaCreateContext)(GLenum, void*) = 0;
 static void (*OSMesaDestroyContext)(void*) = 0;
 static GLboolean (*OSMesaMakeCurrent)(void* , void*, GLenum, GLsizei, GLsizei) = 0;
 static GLboolean (*OSMesaGetColorBuffer)(void*, GLint*, GLint*, GLint*, void**) = 0;
-
+static void (*OSMesaFinish)(void) = 0;
 
 static int OSMesa_LoadLibrary(_THIS, const char *path)
 {
@@ -63,6 +65,11 @@ static int OSMesa_LoadLibrary(_THIS, const char *path)
     }
 
     OSMesaMakeCurrent = dlsym(osmesa_lib, "OSMesaMakeCurrent");
+    if (!OSMesaMakeCurrent) {
+        return SDL_SetError("%s", dlerror());
+    }
+
+    OSMesaFinish = OSMesaGetProcAddress("glFinish");
     if (!OSMesaMakeCurrent) {
         return SDL_SetError("%s", dlerror());
     }
@@ -138,6 +145,8 @@ static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
     void *buffer;
     int format;
 
+    OSMesaFinish();
+
     if (!OSMesaGetColorBuffer(osmesa_context, &width, &height, &format, &buffer)) {
         return SDL_SetError("Failed to retrieve color buffer");
     }
@@ -185,7 +194,6 @@ static void OSMesa_DeleteContext(_THIS, SDL_GLContext context)
     }
 }
 
-
 int PS5_OSMesa_InitDevice(SDL_VideoDevice* device)
 {
     device->GL_LoadLibrary = OSMesa_LoadLibrary;
@@ -201,3 +209,4 @@ int PS5_OSMesa_InitDevice(SDL_VideoDevice* device)
     return 0;
 }
 
+#endif

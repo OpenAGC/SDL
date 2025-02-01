@@ -337,7 +337,9 @@ static SDL_VideoDevice *PS5_CreateDevice(void)
     device->IsScreenKeyboardShown = PS5_IsScreenKeyboardShown;
     device->free = PS5_DestroyDevice;
 
+#if SDL_VIDEO_OPENGL_OSMESA
     PS5_OSMesa_InitDevice(device);
+#endif
 
     return device;
 }
