@@ -153,7 +153,7 @@ static void PS5_GetDisplayModes(_THIS, SDL_VideoDisplay * display)
     mode.refresh_rate = 60;
 
     SDL_AddDisplayMode(display, &display->current_mode);
-    SDL_AddDisplayMode(display, &mode);
+    //SDL_AddDisplayMode(display, &mode);
 }
 
 static int PS5_SetDisplayMode(_THIS, SDL_VideoDisplay * display,
