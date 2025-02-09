@@ -26,15 +26,20 @@
 #include <SDL2/SDL_opengl.h>
 #include <dlfcn.h>
 
+#ifndef OSMESA_Y_UP
+#define OSMESA_Y_UP 0x11
+#endif
 
 static void* osmesa_lib = NULL;
 static void* osmesa_context = NULL;
 
 static void* (*OSMesaGetProcAddress)(const char*) = 0;
 static void* (*OSMesaCreateContext)(GLenum, void*) = 0;
+static void(*OSMesaPixelStore)(GLint, GLint) = 0;
 static void (*OSMesaDestroyContext)(void*) = 0;
 static GLboolean (*OSMesaMakeCurrent)(void* , void*, GLenum, GLsizei, GLsizei) = 0;
 static GLboolean (*OSMesaGetColorBuffer)(void*, GLint*, GLint*, GLint*, void**) = 0;
+
 static void (*OSMesaFinish)(void) = 0;
 
 static int OSMesa_LoadLibrary(_THIS, const char *path)
@@ -69,6 +74,11 @@ static int OSMesa_LoadLibrary(_THIS, const char *path)
         return SDL_SetError("%s", dlerror());
     }
 
+    OSMesaPixelStore = dlsym(osmesa_lib, "OSMesaPixelStore");
+    if (!OSMesaPixelStore) {
+        return SDL_SetError("%s", dlerror());
+    }
+
     OSMesaFinish = OSMesaGetProcAddress("glFinish");
     if (!OSMesaMakeCurrent) {
         return SDL_SetError("%s", dlerror());
@@ -95,7 +105,7 @@ static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context)
     int width;
     void *fb;
 
-    SDL_GetWindowSize(window, &width, &height);
+    SDL_GL_GetDrawableSize(window, &width, &height);
     fb = SDL_malloc(width * height * sizeof(GLubyte) * 4);
     if (!fb) {
         return SDL_SetError("Failed to allocate frame buffer");
@@ -105,6 +115,8 @@ static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context)
         SDL_free(fb);
         return SDL_SetError("Failed to make context current");
     }
+
+    OSMesaPixelStore(OSMESA_Y_UP, 0);
 
     osmesa_context = context;
 
@@ -140,6 +152,7 @@ static int OSMesa_GetSwapInterval(_THIS)
 
 static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
 {
+    SDL_Surface *osmesa_surface;
     SDL_Surface *surface;
     int width, height;
     void *buffer;
@@ -156,29 +169,16 @@ static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
         return SDL_SetError("Failed to get SDL window surface");
     }
 
-    if(surface->w != width || surface->h != height) {
-        return SDL_SetError("Surface size does not match buffer size");
+    osmesa_surface = SDL_CreateRGBSurfaceFrom(buffer, width, height, 32, width*4,
+					      0x000000FF, 0x0000FF00, 0x00FF0000,
+					      0xFF000000);
+    if (!osmesa_surface) {
+        return SDL_SetError("Failed to create OSMesa SDL surface");
     }
 
-    // memcpy(surface->pixels, buffer, width * height * sizeof(GLubyte) * 4);
-
-    // Image will be upside-down from SDL's perspective, flip manually using an RGBA
-    // variation of the math from:
-    // https://github.com/vallentin/GLCollection/blob/master/screenshot.cpp
-    //
-    // Apparently this is necessary, since OpenGL doesn't provide a built-in way
-    // to handle this:
-    // https://www.opengl.org/archives/resources/features/KilgardTechniques/oglpitfall/
-    for (int y = 0; y < height / 2; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int top = (x + y * width) * 4;
-            int bottom = (x + (height - y - 1) * width) * 4;
-            char rgba[4];
-            SDL_memcpy(rgba, buffer + top, sizeof(rgba));
-            SDL_memcpy(surface->pixels + top, buffer + bottom, sizeof(rgba));
-            SDL_memcpy(surface->pixels + bottom, rgba, sizeof(rgba));
-        }
-    }
+    SDL_BlitScaled(osmesa_surface, &(SDL_Rect){0, 0, width, height},
+		   surface, &(SDL_Rect){0, 0, surface->w, surface->h});
+    SDL_FreeSurface(osmesa_surface);
 
     if (SDL_UpdateWindowSurface(window) != 0) {
         return SDL_SetError("Failed to update window surface");
