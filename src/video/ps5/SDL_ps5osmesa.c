@@ -80,7 +80,7 @@ static int OSMesa_LoadLibrary(_THIS, const char *path)
     }
 
     OSMesaFinish = OSMesaGetProcAddress("glFinish");
-    if (!OSMesaMakeCurrent) {
+    if (!OSMesaFinish) {
         return SDL_SetError("%s", dlerror());
     }
 
@@ -92,6 +92,15 @@ static void OSMesa_UnloadLibrary(_THIS)
     if(osmesa_lib) {
         dlclose(osmesa_lib);
     }
+
+    osmesa_lib = 0;
+    OSMesaGetProcAddress = 0;
+    OSMesaCreateContext = 0;
+    OSMesaDestroyContext = 0;
+    OSMesaGetColorBuffer = 0;
+    OSMesaMakeCurrent = 0;
+    OSMesaPixelStore = 0;
+    OSMesaFinish = 0;
 }
 
 static void* OSMesa_GetProcAddress(_THIS, const char *proc)
@@ -101,18 +110,12 @@ static void* OSMesa_GetProcAddress(_THIS, const char *proc)
 
 static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context)
 {
-    int height;
-    int width;
-    void *fb;
+    SDL_Surface* surface = SDL_GetWindowSurface(window);
 
-    SDL_GL_GetDrawableSize(window, &width, &height);
-    fb = SDL_malloc(width * height * sizeof(GLubyte) * 4);
-    if (!fb) {
-        return SDL_SetError("Failed to allocate frame buffer");
+    if (!surface) {
+        return SDL_SetError("Couldn't find surface for window");
     }
-
-    if (!OSMesaMakeCurrent(context, fb, GL_UNSIGNED_BYTE, width, height)) {
-        SDL_free(fb);
+    if (!OSMesaMakeCurrent(context, surface->pixels, GL_UNSIGNED_BYTE, surface->w, surface->h)) {
         return SDL_SetError("Failed to make context current");
     }
 
@@ -152,33 +155,14 @@ static int OSMesa_GetSwapInterval(_THIS)
 
 static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
 {
-    SDL_Surface *osmesa_surface;
     SDL_Surface *surface;
-    int width, height;
-    void *buffer;
-    int format;
 
     OSMesaFinish();
-
-    if (!OSMesaGetColorBuffer(osmesa_context, &width, &height, &format, &buffer)) {
-        return SDL_SetError("Failed to retrieve color buffer");
-    }
 
     surface = SDL_GetWindowSurface(window);
     if (!surface) {
         return SDL_SetError("Failed to get SDL window surface");
     }
-
-    osmesa_surface = SDL_CreateRGBSurfaceFrom(buffer, width, height, 32, width*4,
-					      0x000000FF, 0x0000FF00, 0x00FF0000,
-					      0xFF000000);
-    if (!osmesa_surface) {
-        return SDL_SetError("Failed to create OSMesa SDL surface");
-    }
-
-    SDL_BlitScaled(osmesa_surface, &(SDL_Rect){0, 0, width, height},
-		   surface, &(SDL_Rect){0, 0, surface->w, surface->h});
-    SDL_FreeSurface(osmesa_surface);
 
     if (SDL_UpdateWindowSurface(window) != 0) {
         return SDL_SetError("Failed to update window surface");

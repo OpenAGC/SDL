@@ -44,6 +44,7 @@ typedef struct PS5_DeviceData
     struct kevent *evt_queue;
     intptr_t paddr;
     size_t memsize;
+    SDL_Surface *surface;
 } PS5_DeviceData;
 
 typedef struct PS5_DrawChunk {

@@ -122,13 +122,25 @@ static int PS5_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
     struct kevent evt;
     int junk;
 
-    surface = (SDL_Surface *)SDL_GetWindowData(window, PS5_SURFACE);
+    surface = SDL_GetWindowSurface(window);
     if (!surface) {
         return SDL_SetError("Couldn't find surface for window");
     }
 
-    PS5_DrawPixelsAsTiles(surface->pixels, device_data->vbuf[idx].data,
-                          surface->w, surface->h);
+    if(surface->w == device_data->surface->w &&
+       surface->h == device_data->surface->h) {
+        PS5_DrawPixelsAsTiles(surface->pixels, device_data->vbuf[idx].data,
+                              surface->w, surface->h);
+    } else {
+        SDL_BlitSurface(surface, NULL, device_data->surface,
+                        &(SDL_Rect){(device_data->surface->w - surface->w) / 2,
+                                    (device_data->surface->h - surface->h) / 2,
+                                    surface->w, surface->h});
+        PS5_DrawPixelsAsTiles(device_data->surface->pixels,
+                              device_data->vbuf[idx].data,
+                              device_data->surface->w,
+                              device_data->surface->h);
+    }
 
     if (sceVideoOutSubmitFlip(device_data->handle, idx, 1, frame_id)) {
         return SDL_SetError("sceVideoOutSubmitFlip: %s", strerror(errno));
@@ -249,6 +261,8 @@ static int PS5_VideoInit(_THIS)
         return SDL_SetError("sceVideoOutRegisterBuffers2: %s", strerror(errno));
     }
 
+    device_data->surface = SDL_CreateRGBSurfaceWithFormat(0, mode.w, mode.h, 32,
+                                                          mode.format);
     SDL_zero(display);
     display.desktop_mode = mode;
     display.current_mode = mode;
@@ -279,10 +293,6 @@ static void PS5_VideoQuit(_THIS)
 
 static int PS5_CreateWindow(_THIS, SDL_Window *window)
 {
-    if (window) {
-        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
-    }
-
     return 0;
 }
 
