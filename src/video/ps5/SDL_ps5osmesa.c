@@ -40,7 +40,7 @@ static void (*OSMesaDestroyContext)(void*) = 0;
 static GLboolean (*OSMesaMakeCurrent)(void* , void*, GLenum, GLsizei, GLsizei) = 0;
 static GLboolean (*OSMesaGetColorBuffer)(void*, GLint*, GLint*, GLint*, void**) = 0;
 
-static void (*OSMesaFinish)(void) = 0;
+static void (*OSMesaFlush)(void) = 0;
 
 static int OSMesa_LoadLibrary(_THIS, const char *path)
 {
@@ -79,8 +79,8 @@ static int OSMesa_LoadLibrary(_THIS, const char *path)
         return SDL_SetError("%s", dlerror());
     }
 
-    OSMesaFinish = OSMesaGetProcAddress("glFinish");
-    if (!OSMesaFinish) {
+    OSMesaFlush = OSMesaGetProcAddress("glFlush");
+    if (!OSMesaFlush) {
         return SDL_SetError("%s", dlerror());
     }
 
@@ -100,7 +100,6 @@ static void OSMesa_UnloadLibrary(_THIS)
     OSMesaGetColorBuffer = 0;
     OSMesaMakeCurrent = 0;
     OSMesaPixelStore = 0;
-    OSMesaFinish = 0;
 }
 
 static void* OSMesa_GetProcAddress(_THIS, const char *proc)
@@ -157,7 +156,7 @@ static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
 {
     SDL_Surface *surface;
 
-    OSMesaFinish();
+    OSMesaFlush();
 
     surface = SDL_GetWindowSurface(window);
     if (!surface) {
