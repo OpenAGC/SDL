@@ -21,7 +21,7 @@
 
 #include "../../SDL_internal.h"
 
-#if SDL_VIDEO_DRIVER_PS5
+#ifdef SDL_VIDEO_DRIVER_PS5
 
 #include <errno.h>
 #include <stdbool.h>

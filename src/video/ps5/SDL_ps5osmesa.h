@@ -20,13 +20,13 @@
 */
 #include "../../SDL_internal.h"
 
-#ifndef SDL_ps5gl_h_
-#define SDL_ps5gl_h_
+#ifndef SDL_ps5osmesa_h_
+#define SDL_ps5osmesa_h_
 
 #include "../SDL_sysvideo.h"
 
 int PS5_OSMesa_InitDevice(SDL_VideoDevice* dev);
 
-#endif /* SDL_ps5gl_h_ */
+#endif /* SDL_ps5osmesa_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */
