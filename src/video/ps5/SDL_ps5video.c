@@ -31,8 +31,6 @@
 #include "SDL_ps5keyboard.h"
 #include "SDL_ps5osmesa.h"
 
-#define PS5_SURFACE "_PS5_Surface"
-
 #define PS5_THREAD_COUNT 12
 
 
@@ -84,7 +82,7 @@ static void PS5_DestroyWindowFramebuffer(_THIS, SDL_Window *window)
 {
     SDL_Surface *surface;
 
-    surface = (SDL_Surface *)SDL_SetWindowData(window, PS5_SURFACE, NULL);
+    surface = window->surface;
     SDL_FreeSurface(surface);
 }
 
@@ -96,7 +94,9 @@ static int PS5_CreateWindowFramebuffer(_THIS, SDL_Window *window,
     SDL_Surface *surface;
     int w, h;
 
-    PS5_DestroyWindowFramebuffer(_this, window);
+    /* Free the old framebuffer surface */
+    // PS5_DestroyWindowFramebuffer(window);
+    SDL_assert(window->surface == NULL);
 
     SDL_GetWindowSizeInPixels(window, &w, &h);
     surface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 0, surface_format);
@@ -104,11 +104,11 @@ static int PS5_CreateWindowFramebuffer(_THIS, SDL_Window *window,
         return -1;
     }
 
-    SDL_SetWindowData(window, PS5_SURFACE, surface);
-    *format = surface_format;
-    *pixels = surface->pixels;
-    *pitch = surface->pitch;
-
+    /* Save the info and return! */
+    window->surface = surface;
+    // *format = surface_format;
+    // *pixels = surface->pixels;
+    // *pitch = surface->pitch;
     return 0;
 }
 
@@ -122,7 +122,7 @@ static int PS5_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
     struct kevent evt;
     int junk;
 
-    surface = SDL_GetWindowSurface(window);
+    surface = window->surface;
     if (!surface) {
         return SDL_SetError("Couldn't find surface for window");
     }
