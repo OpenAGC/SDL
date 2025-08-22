@@ -288,6 +288,7 @@ static void PS5_JoystickDetect(void)
         if (user_ids[i] != -1) {
             pad_ctx[i].instance_id = instance_counter++;
             pad_ctx[i].user_id = user_ids[i];
+            SDL_zero(pad_ctx[i].pad);
             if (sceUserServiceGetUserName(user_ids[i], pad_ctx[i].user_name,
                                           sizeof(pad_ctx[i].user_name))) {
                 sprintf(pad_ctx[i].user_name, "%08x", pad_ctx[i].user_id);
