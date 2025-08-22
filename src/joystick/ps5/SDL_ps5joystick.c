@@ -20,7 +20,7 @@
 */
 #include "../../SDL_internal.h"
 
-#if SDL_JOYSTICK_PS5
+#ifdef SDL_JOYSTICK_PS5
 
 #include <errno.h>
 

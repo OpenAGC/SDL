@@ -21,7 +21,7 @@
 
 #include "../../SDL_internal.h"
 
-#if SDL_VIDEO_DRIVER_PS5
+#ifdef SDL_VIDEO_DRIVER_PS5
 
 #include <errno.h>
 #include <pthread.h>
@@ -347,7 +347,7 @@ static SDL_VideoDevice *PS5_CreateDevice(void)
     device->IsScreenKeyboardShown = PS5_IsScreenKeyboardShown;
     device->free = PS5_DestroyDevice;
 
-#if SDL_VIDEO_OPENGL_OSMESA
+#ifdef SDL_VIDEO_OPENGL_OSMESA
     PS5_OSMesa_InitDevice(device);
 #endif
 

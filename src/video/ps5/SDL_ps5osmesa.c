@@ -21,7 +21,7 @@
 
 #include "SDL_ps5osmesa.h"
 
-#if SDL_VIDEO_OPENGL_OSMESA
+#ifdef SDL_VIDEO_OPENGL_OSMESA
 
 #include <SDL2/SDL_opengl.h>
 #include <dlfcn.h>
