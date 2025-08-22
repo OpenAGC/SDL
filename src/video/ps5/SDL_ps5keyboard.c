@@ -23,12 +23,9 @@
 
 #ifdef SDL_VIDEO_DRIVER_PS5
 
-#include <errno.h>
-#include <stdbool.h>
-#include <stdint.h>
-
 #include "SDL_error.h"
 #include "SDL_events.h"
+#include "SDL_stdinc.h"
 
 #include "../../events/SDL_keyboard_c.h"
 

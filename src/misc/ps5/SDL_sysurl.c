@@ -21,9 +21,6 @@
 
 #include "../SDL_sysurl.h"
 
-#include <errno.h>
-#include <string.h>
-
 int sceUserServiceInitialize(void*);
 int sceSystemServiceLaunchWebBrowser(const char *uri, void*);
 
