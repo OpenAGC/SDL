@@ -40,35 +40,30 @@ inline static Uint16 PS5AUDIO_SampleSize(Uint16 size)
 
 static int PS5AUDIO_OpenDevice(_THIS, const char *devname)
 {
-    SDL_bool supported_format = SDL_FALSE;
     SDL_AudioFormat test_format;
     size_t mix_len, i;
     Uint8 fmt;
 
-    this->hidden = (struct SDL_PrivateAudioData *) SDL_malloc(sizeof(*this->hidden));
+    this->hidden = (struct SDL_PrivateAudioData *) SDL_calloc(1, sizeof(*this->hidden));
     if (this->hidden == NULL) {
         return SDL_OutOfMemory();
     }
-    SDL_zerop(this->hidden);
 
-    test_format = SDL_FirstAudioFormat(this->spec.format);
-    while ((!supported_format) && (test_format)) {
+    for (test_format = SDL_FirstAudioFormat(this->spec.format); test_format; test_format = SDL_NextAudioFormat()) {
         if (test_format == AUDIO_S16LSB) {
-            supported_format = SDL_TRUE;
             fmt = (this->spec.channels == 1) ? PROSPERO_AUDIO_OUT_PARAM_FORMAT_S16_MONO
                                              : PROSPERO_AUDIO_OUT_PARAM_FORMAT_S16_STEREO;
         } else if (test_format == AUDIO_F32LSB) {
-            supported_format = SDL_TRUE;
             fmt = (this->spec.channels == 1) ? PROSPERO_AUDIO_OUT_PARAM_FORMAT_FLOAT_MONO
                                              : PROSPERO_AUDIO_OUT_PARAM_FORMAT_FLOAT_STEREO;
         } else {
-            test_format = SDL_NextAudioFormat();
+            continue;
         }
+        break;
     }
 
-    if (!supported_format) {
-        return SDL_SetError("PS5AUDIO_OpenDevice: unsupported audio format: 0x%08x",
-                            test_format);
+    if (!test_format) {
+        return SDL_SetError("%s: Unsupported audio format", "ps5");
     }
 
     this->spec.format = test_format;
