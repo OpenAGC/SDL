@@ -29,17 +29,10 @@
 /* Hidden "this" pointer for the audio functions */
 #define _THIS   SDL_AudioDevice *this
 
-#define NUM_BUFFERS 2
-
 struct SDL_PrivateAudioData {
-    /* The hardware output channel. */
-    int32_t aout;
-    /* The raw allocated mixing buffer. */
-    Uint8 *rawbuf;
-    /* Individual mixing buffers. */
-    Uint8 *mixbufs[NUM_BUFFERS];
-    /* Index of the next available mixing buffer. */
-    int next_buffer;
+    int32_t handle;
+    Uint8 *mixbuf;
+    int mixlen;
 };
 
 #define PROSPERO_AUDIO_OUT_PORT_TYPE_MAIN 0

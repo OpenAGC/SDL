@@ -41,7 +41,6 @@ inline static Uint16 PS5AUDIO_SampleSize(Uint16 size)
 static int PS5AUDIO_OpenDevice(_THIS, const char *devname)
 {
     SDL_AudioFormat test_format;
-    size_t mix_len, i;
     Uint8 fmt;
 
     this->hidden = (struct SDL_PrivateAudioData *) SDL_calloc(1, sizeof(*this->hidden));
@@ -74,65 +73,48 @@ static int PS5AUDIO_OpenDevice(_THIS, const char *devname)
     /* Update the fragment size as size in bytes. */
     SDL_CalculateAudioSpec(&this->spec);
 
-    /* Allocate the mixing buffer.  Its size and starting address must
-       be a multiple of 64 bytes.  Our sample count is already a multiple of
-       64, so spec->size should be a multiple of 64 as well. */
-    mix_len = this->spec.size * NUM_BUFFERS;
-    if (posix_memalign((void**)&this->hidden->rawbuf, 64, mix_len)) {
-        return SDL_SetError("PS5AUDIO_OpenDevice: couldn't allocate mix buffer");
+    this->hidden->handle = sceAudioOutOpen(PROSPERO_USER_SERVICE_USER_ID_SYSTEM,
+					   PROSPERO_AUDIO_OUT_PORT_TYPE_MAIN,
+					   0, this->spec.samples, 48000, fmt);
+    if (this->hidden->handle < 1) {
+        return SDL_SetError("sceAudioOutOpen: %s", strerror(this->hidden->handle));
     }
 
-    this->hidden->aout = sceAudioOutOpen(PROSPERO_USER_SERVICE_USER_ID_SYSTEM,
-                                         PROSPERO_AUDIO_OUT_PORT_TYPE_MAIN,
-                                         0, this->spec.samples, 48000, fmt);
-    if (this->hidden->aout < 1) {
-        free(this->hidden->rawbuf);
-        this->hidden->rawbuf = NULL;
-        return SDL_SetError("sceAudioOutOpen: %s", strerror(this->hidden->aout));
-    }
-
-    SDL_memset(this->hidden->rawbuf, 0, mix_len);
-    for (i = 0; i < NUM_BUFFERS; i++) {
-        this->hidden->mixbufs[i] = &this->hidden->rawbuf[i * this->spec.size];
-    }
-
-    this->hidden->next_buffer = 0;
+    this->hidden->mixlen = this->spec.size;
+    this->hidden->mixbuf = (Uint8 *)SDL_calloc(1, this->hidden->mixlen);
 
     return 0;
 }
 
 static void PS5AUDIO_PlayDevice(_THIS)
 {
-    Uint8 *buf = this->hidden->mixbufs[this->hidden->next_buffer];
-    sceAudioOutOutput(this->hidden->aout, buf);
-    this->hidden->next_buffer = (this->hidden->next_buffer + 1) % NUM_BUFFERS;
+    sceAudioOutOutput(this->hidden->handle, this->hidden->mixbuf);
 }
 
-/* This function waits until it is possible to write a full sound buffer */
 static void PS5AUDIO_WaitDevice(_THIS)
 {
-    //sceAudioOutOutput(this->hidden->aout, NULL);
+  // NOP, sceAudioOutOutput() is blocking
 }
 
 static Uint8 *PS5AUDIO_GetDeviceBuf(_THIS)
 {
-    return this->hidden->mixbufs[this->hidden->next_buffer];
+    return this->hidden->mixbuf;
 }
 
 static void PS5AUDIO_CloseDevice(_THIS)
 {
     int res;
-    if (this->hidden->aout > 0) {
-        res = sceAudioOutClose(this->hidden->aout);
+    if (this->hidden->handle > 0) {
+        res = sceAudioOutClose(this->hidden->handle);
         if (res != 0) {
             SDL_SetError("sceAudioOutClose: %s", strerror(res));
         }
-        this->hidden->aout = -1;
+        this->hidden->handle = -1;
     }
 
-    if (this->hidden->rawbuf != NULL) {
-        free(this->hidden->rawbuf);
-        this->hidden->rawbuf = NULL;
+    if (this->hidden->mixbuf) {
+        free(this->hidden->mixbuf);
+        this->hidden->mixbuf = 0;
     }
 }
 
