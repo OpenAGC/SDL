@@ -227,7 +227,7 @@ static int PS5_VideoInit(_THIS)
     if (device_data->handle < 0) {
         return SDL_SetError("sceVideoOutOpen: %s", strerror(errno));
     }
-    device_data->memsize = 0x20000000;
+    device_data->memsize = 0x4000000;
     if (sceKernelAllocateMainDirectMemory(device_data->memsize, 0x20000, 3,
                                           &device_data->paddr)) {
         return SDL_SetError("sceKernelAllocateMainDirectMemory: %s",
