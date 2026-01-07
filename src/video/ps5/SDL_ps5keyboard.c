@@ -120,7 +120,7 @@ SceImeDialogStatus sceImeDialogGetStatus(void);
 static int g_keyboard_handle = -1;
 static keyboard_state_t g_prev_keyboard_state = {0};
 
-static SceImeDialogStatus g_ime_dialog_status = SCE_IME_DIALOG_STATUS_NONE;;
+static SceImeDialogStatus g_ime_dialog_status = SCE_IME_DIALOG_STATUS_NONE;
 static wchar_t g_ime_dialog_title[0x80] = {0};
 static wchar_t g_ime_dialog_text[0x800] = {0};
 
