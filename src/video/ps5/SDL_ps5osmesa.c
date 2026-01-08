@@ -30,57 +30,74 @@
 #define OSMESA_Y_UP 0x11
 #endif
 
-static void* osmesa_lib = NULL;
-static void* osmesa_context = NULL;
+#define DEFAULT_OSMESA "libOSMesa.so.8"
 
-static void* (*OSMesaGetProcAddress)(const char*) = 0;
-static void* (*OSMesaCreateContext)(GLenum, void*) = 0;
-static void(*OSMesaPixelStore)(GLint, GLint) = 0;
-static void (*OSMesaDestroyContext)(void*) = 0;
-static GLboolean (*OSMesaMakeCurrent)(void* , void*, GLenum, GLsizei, GLsizei) = 0;
-static GLboolean (*OSMesaGetColorBuffer)(void*, GLint*, GLint*, GLint*, void**) = 0;
-
-static void (*OSMesaFlush)(void) = 0;
+struct SDL_GLDriverData
+{
+    void* (*OSMesaGetProcAddress)(const char*);
+    void* (*OSMesaCreateContext)(GLenum, void*);
+    void (*OSMesaPixelStore)(GLint, GLint);
+    void (*OSMesaPostprocess)(void*, const char*, unsigned);
+    void (*OSMesaDestroyContext)(void*);
+    GLboolean (*OSMesaMakeCurrent)(void* , void*, GLenum, GLsizei, GLsizei);
+    GLboolean (*OSMesaGetColorBuffer)(void*, GLint*, GLint*, GLint*, void**);
+    void (*OSMesaFlush)(void);
+};
 
 static int OSMesa_LoadLibrary(_THIS, const char *path)
 {
-    osmesa_lib = dlopen("libOSMesa.so.8", RTLD_LAZY);
-    if (!osmesa_lib) {
+    void* handle;
+
+    if (_this->gl_data) {
+        return SDL_SetError("OSMesa library already loaded");
+    }
+
+    path = DEFAULT_OSMESA;
+    handle = _this->gl_config.dll_handle = dlopen(path, RTLD_LAZY);
+    if (!handle) {
+      return SDL_SetError("%s: %s", path, dlerror());
+    }
+
+    SDL_strlcpy(_this->gl_config.driver_path, path,
+                SDL_arraysize(_this->gl_config.driver_path));
+
+    _this->gl_data = SDL_calloc(1, sizeof(struct SDL_GLDriverData));
+    if (!_this->gl_data) {
+        return SDL_OutOfMemory();
+    }
+
+    _this->gl_data->OSMesaGetProcAddress = dlsym(handle, "OSMesaGetProcAddress");
+    if (!_this->gl_data->OSMesaGetProcAddress) {
         return SDL_SetError("%s", dlerror());
     }
 
-    OSMesaGetProcAddress = dlsym(osmesa_lib, "OSMesaGetProcAddress");
-    if (!OSMesaGetProcAddress) {
+    _this->gl_data->OSMesaCreateContext = dlsym(handle, "OSMesaCreateContext");
+    if (!_this->gl_data->OSMesaCreateContext) {
         return SDL_SetError("%s", dlerror());
     }
 
-    OSMesaCreateContext = dlsym(osmesa_lib, "OSMesaCreateContext");
-    if (!OSMesaCreateContext) {
+    _this->gl_data->OSMesaDestroyContext = dlsym(handle, "OSMesaDestroyContext");
+    if (!_this->gl_data->OSMesaDestroyContext) {
         return SDL_SetError("%s", dlerror());
     }
 
-    OSMesaDestroyContext = dlsym(osmesa_lib, "OSMesaDestroyContext");
-    if (!OSMesaDestroyContext) {
+    _this->gl_data->OSMesaGetColorBuffer = dlsym(handle, "OSMesaGetColorBuffer");
+    if (!_this->gl_data->OSMesaGetColorBuffer) {
         return SDL_SetError("%s", dlerror());
     }
 
-    OSMesaGetColorBuffer = dlsym(osmesa_lib, "OSMesaGetColorBuffer");
-    if (!OSMesaGetColorBuffer) {
+    _this->gl_data->OSMesaMakeCurrent = dlsym(handle, "OSMesaMakeCurrent");
+    if (!_this->gl_data->OSMesaMakeCurrent) {
         return SDL_SetError("%s", dlerror());
     }
 
-    OSMesaMakeCurrent = dlsym(osmesa_lib, "OSMesaMakeCurrent");
-    if (!OSMesaMakeCurrent) {
+    _this->gl_data->OSMesaPixelStore = dlsym(handle, "OSMesaPixelStore");
+    if (!_this->gl_data->OSMesaPixelStore) {
         return SDL_SetError("%s", dlerror());
     }
 
-    OSMesaPixelStore = dlsym(osmesa_lib, "OSMesaPixelStore");
-    if (!OSMesaPixelStore) {
-        return SDL_SetError("%s", dlerror());
-    }
-
-    OSMesaFlush = OSMesaGetProcAddress("glFlush");
-    if (!OSMesaFlush) {
+    _this->gl_data->OSMesaFlush = _this->gl_data->OSMesaGetProcAddress("glFlush");
+    if (!_this->gl_data->OSMesaFlush) {
         return SDL_SetError("%s", dlerror());
     }
 
@@ -89,53 +106,77 @@ static int OSMesa_LoadLibrary(_THIS, const char *path)
 
 static void OSMesa_UnloadLibrary(_THIS)
 {
-    if (osmesa_lib) {
-        dlclose(osmesa_lib);
+    if (_this->gl_config.dll_handle) {
+        dlclose(_this->gl_config.dll_handle);
+	_this->gl_config.dll_handle = NULL;
     }
 
-    osmesa_lib = 0;
-    OSMesaGetProcAddress = 0;
-    OSMesaCreateContext = 0;
-    OSMesaDestroyContext = 0;
-    OSMesaGetColorBuffer = 0;
-    OSMesaMakeCurrent = 0;
-    OSMesaPixelStore = 0;
+    if (_this->gl_data) {
+      SDL_free(_this->gl_data);
+      _this->gl_data = NULL;
+    }
 }
 
 static void* OSMesa_GetProcAddress(_THIS, const char *proc)
 {
-    return OSMesaGetProcAddress(proc);
+    if (_this->gl_data) {
+        return _this->gl_data->OSMesaGetProcAddress(proc);
+    }
+    return NULL;
 }
 
 static int OSMesa_MakeCurrent(_THIS, SDL_Window * window, SDL_GLContext context)
 {
     SDL_Surface* surface = SDL_GetWindowSurface(window);
 
+    if (!_this->gl_data) {
+        return SDL_SetError("OSMesa is not loaded");
+    }
     if (!surface) {
         return SDL_SetError("Couldn't find surface for window");
     }
-    if (!OSMesaMakeCurrent(context, surface->pixels, GL_UNSIGNED_BYTE, surface->w, surface->h)) {
+
+    if (!_this->gl_data->OSMesaMakeCurrent(context, surface->pixels, GL_UNSIGNED_BYTE,
+					   surface->w, surface->h)) {
         return SDL_SetError("Failed to make context current");
     }
 
-    OSMesaPixelStore(OSMESA_Y_UP, 0);
-
-    osmesa_context = context;
+    _this->gl_data->OSMesaPixelStore(OSMESA_Y_UP, 0);
 
     return 0;
 }
 
+static void OSMesa_DeleteContext(_THIS, SDL_GLContext ctx)
+{
+    if (_this->gl_data && ctx) {
+        _this->gl_data->OSMesaDestroyContext(ctx);
+    }
+}
+
 static SDL_GLContext OSMesa_CreateContext(_THIS, SDL_Window * window)
 {
+    void* ctx_share;
     void* ctx;
 
-    ctx = OSMesaCreateContext(GL_RGBA, NULL);
+    if (!_this->gl_data) {
+        SDL_SetError("OSMesa is not loaded");
+	return NULL;
+    }
+
+    if (_this->gl_config.share_with_current_context) {
+        ctx_share = SDL_GL_GetCurrentContext();
+    } else {
+        ctx_share = NULL;
+    }
+
+    ctx = _this->gl_data->OSMesaCreateContext(GL_RGBA, ctx_share);
     if (!ctx) {
         SDL_SetError("Failed to create context");
         return NULL;
     }
 
-    if (OSMesa_MakeCurrent(_this, window, ctx)) {
+    if (OSMesa_MakeCurrent(_this, window, ctx) < 0) {
+        OSMesa_DeleteContext(_this, ctx);
         return NULL;
     }
 
@@ -156,7 +197,11 @@ static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
 {
     SDL_Surface *surface;
 
-    OSMesaFlush();
+    if (!_this->gl_data) {
+        return SDL_SetError("OSMesa is not loaded");
+    }
+
+    _this->gl_data->OSMesaFlush();
 
     surface = SDL_GetWindowSurface(window);
     if (!surface) {
@@ -170,12 +215,6 @@ static int OSMesa_SwapWindow(_THIS, SDL_Window *window)
     return 0;
 }
 
-static void OSMesa_DeleteContext(_THIS, SDL_GLContext context)
-{
-    if (context) {
-        OSMesaDestroyContext(context);
-    }
-}
 
 int PS5_OSMesa_InitDevice(SDL_VideoDevice* device)
 {
