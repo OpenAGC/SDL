@@ -46,7 +46,9 @@ struct SDL_GLDriverData
 
 static int OSMesa_LoadLibrary(_THIS, const char *path)
 {
+    static int buffer = 0;
     void* handle;
+    void* ctx;
 
     if (_this->gl_data) {
         return SDL_SetError("OSMesa library already loaded");
@@ -99,6 +101,16 @@ static int OSMesa_LoadLibrary(_THIS, const char *path)
     _this->gl_data->OSMesaFlush = _this->gl_data->OSMesaGetProcAddress("glFlush");
     if (!_this->gl_data->OSMesaFlush) {
         return SDL_SetError("%s", dlerror());
+    }
+
+    // Create a minimal dummy context so glGetString can be invoked without
+    // having to set a real context.
+    ctx = _this->gl_data->OSMesaCreateContext(GL_RGBA, NULL);
+    if (!ctx) {
+        return SDL_SetError("Failed to create dummy context");
+    }
+    if (!_this->gl_data->OSMesaMakeCurrent(ctx, &buffer, GL_UNSIGNED_BYTE, 1, 1)) {
+        return SDL_SetError("Failed to make dummy context current");
     }
 
     return 0;
