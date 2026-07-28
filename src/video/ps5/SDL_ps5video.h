@@ -45,7 +45,15 @@ typedef struct PS5_DeviceData
     intptr_t paddr;
     size_t memsize;
     SDL_Surface *surface;
+    int presentation_owner;
 } PS5_DeviceData;
+
+typedef enum PS5_PresentationOwner
+{
+    PS5_PRESENTATION_NONE = 0,
+    PS5_PRESENTATION_SOFTWARE,
+    PS5_PRESENTATION_OPENAGC
+} PS5_PresentationOwner;
 
 typedef struct PS5_DrawChunk {
     uint32_t *src;
@@ -81,6 +89,11 @@ void sceVideoOutSetBufferAttribute2(PS5_VideoAttr*, uint64_t, uint32_t, uint32_t
                                     uint32_t, uint64_t, uint32_t, uint64_t);
 int sceVideoOutRegisterBuffers2(int, int, int, PS5_VideoBuf*, int, PS5_VideoAttr*,
                                 int, void*);
+
+int PS5_AcquirePresentation(SDL_VideoDevice *device,
+                            PS5_PresentationOwner owner);
+void PS5_ReleasePresentation(SDL_VideoDevice *device,
+                             PS5_PresentationOwner owner);
 
 #endif /* SDL_ps5video_h_ */
 

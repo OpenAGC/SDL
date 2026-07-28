@@ -25,6 +25,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <sys/mman.h>
 
 #include "SDL_ps5tilemap.inc"
 #include "SDL_ps5video.h"
@@ -32,6 +33,136 @@
 #include "SDL_ps5osmesa.h"
 
 #define PS5_THREAD_COUNT 12
+#define PS5_SOFTWARE_WIDTH 1920
+#define PS5_SOFTWARE_HEIGHT 1080
+#define PS5_SOFTWARE_BUFFER_COUNT 2
+#define PS5_SOFTWARE_MEMORY_SIZE 0x4000000
+
+int PS5_AcquirePresentation(SDL_VideoDevice *device,
+                            PS5_PresentationOwner owner)
+{
+    PS5_DeviceData *device_data;
+
+    if (!device || owner == PS5_PRESENTATION_NONE) {
+        return SDL_InvalidParamError("presentation owner");
+    }
+    device_data = (PS5_DeviceData *)device->driverdata;
+    if (device_data->presentation_owner != PS5_PRESENTATION_NONE) {
+        return SDL_SetError("PS5 presentation is already owned by %s",
+                            device_data->presentation_owner == PS5_PRESENTATION_SOFTWARE ?
+                            "the software framebuffer" : "the OpenAGC renderer");
+    }
+    device_data->presentation_owner = owner;
+    return 0;
+}
+
+void PS5_ReleasePresentation(SDL_VideoDevice *device,
+                             PS5_PresentationOwner owner)
+{
+    PS5_DeviceData *device_data;
+
+    if (!device) {
+        return;
+    }
+    device_data = (PS5_DeviceData *)device->driverdata;
+    if (device_data->presentation_owner == owner) {
+        device_data->presentation_owner = PS5_PRESENTATION_NONE;
+    }
+}
+
+static void PS5_DestroySoftwarePresentation(_THIS)
+{
+    PS5_DeviceData *device_data = (PS5_DeviceData *)_this->driverdata;
+
+    if (device_data->evt_queue) {
+        if (device_data->handle >= 0) {
+            sceVideoOutDeleteFlipEvent(device_data->evt_queue,
+                                       device_data->handle);
+        }
+        sceKernelDeleteEqueue(device_data->evt_queue);
+        device_data->evt_queue = NULL;
+    }
+    if (device_data->handle >= 0) {
+        sceVideoOutClose(device_data->handle);
+        device_data->handle = -1;
+    }
+    if (device_data->vbuf[0].data) {
+        munmap(device_data->vbuf[0].data, device_data->memsize);
+        SDL_memset(device_data->vbuf, 0, sizeof(device_data->vbuf));
+    }
+    if (device_data->paddr) {
+        sceKernelReleaseDirectMemory(device_data->paddr,
+                                     device_data->memsize);
+        device_data->paddr = 0;
+    }
+    device_data->memsize = 0;
+    SDL_FreeSurface(device_data->surface);
+    device_data->surface = NULL;
+}
+
+static int PS5_CreateSoftwarePresentation(_THIS, int width, int height)
+{
+    PS5_DeviceData *device_data = (PS5_DeviceData *)_this->driverdata;
+    PS5_VideoAttr vattr;
+    void *vaddr = NULL;
+
+    if (PS5_AcquirePresentation(_this, PS5_PRESENTATION_SOFTWARE) < 0) {
+        return -1;
+    }
+    SDL_zero(vattr);
+    SDL_memset(device_data->vbuf, 0, sizeof(device_data->vbuf));
+    device_data->handle = sceVideoOutOpen(0xff, 0, 0, NULL);
+    if (device_data->handle < 0) {
+        SDL_SetError("sceVideoOutOpen: %s", strerror(errno));
+        goto fail;
+    }
+    device_data->memsize = PS5_SOFTWARE_MEMORY_SIZE;
+    if (sceKernelAllocateMainDirectMemory(device_data->memsize, 0x20000, 3,
+                                          &device_data->paddr)) {
+        SDL_SetError("sceKernelAllocateMainDirectMemory: %s", strerror(errno));
+        goto fail;
+    }
+    if (sceKernelMapDirectMemory(&vaddr, device_data->memsize, 0x33, 0,
+                                 device_data->paddr, 0x20000)) {
+        SDL_SetError("sceKernelMapDirectMemory: %s", strerror(errno));
+        goto fail;
+    }
+    device_data->vbuf[0].data = vaddr;
+    device_data->vbuf[1].data = (Uint8 *)vaddr + device_data->memsize / 2;
+    if (sceKernelCreateEqueue(&device_data->evt_queue, "SDL flip queue")) {
+        SDL_SetError("sceKernelCreateEqueue: %s", strerror(errno));
+        goto fail;
+    }
+    if (sceVideoOutAddFlipEvent(device_data->evt_queue,
+                                device_data->handle, NULL)) {
+        SDL_SetError("sceVideoOutAddFlipEvent: %s", strerror(errno));
+        goto fail;
+    }
+    if (sceVideoOutSetFlipRate(device_data->handle, 0)) {
+        SDL_SetError("sceVideoOutSetFlipRate: %s", strerror(errno));
+        goto fail;
+    }
+    sceVideoOutSetBufferAttribute2(&vattr, 0x8000000022000000UL, 0,
+                                   width, height, 0, 0, 0);
+    if (sceVideoOutRegisterBuffers2(device_data->handle, 0, 0,
+                                    device_data->vbuf,
+                                    PS5_SOFTWARE_BUFFER_COUNT,
+                                    &vattr, 0, NULL)) {
+        SDL_SetError("sceVideoOutRegisterBuffers2: %s", strerror(errno));
+        goto fail;
+    }
+    device_data->surface = SDL_CreateRGBSurfaceWithFormat(
+        0, width, height, 32, SDL_PIXELFORMAT_ABGR8888);
+    if (!device_data->surface) {
+        goto fail;
+    }
+    return 0;
+
+fail:
+    PS5_DestroySoftwarePresentation(_this);
+    PS5_ReleasePresentation(_this, PS5_PRESENTATION_SOFTWARE);
+    return -1;
+}
 
 
 static void* PS5_DrawTileThread(void* arg) {
@@ -84,6 +215,9 @@ static void PS5_DestroyWindowFramebuffer(_THIS, SDL_Window *window)
 
     surface = window->surface;
     SDL_FreeSurface(surface);
+    window->surface = NULL;
+    PS5_DestroySoftwarePresentation(_this);
+    PS5_ReleasePresentation(_this, PS5_PRESENTATION_SOFTWARE);
 }
 
 static int PS5_CreateWindowFramebuffer(_THIS, SDL_Window *window,
@@ -99,16 +233,22 @@ static int PS5_CreateWindowFramebuffer(_THIS, SDL_Window *window,
     SDL_assert(window->surface == NULL);
 
     SDL_GetWindowSizeInPixels(window, &w, &h);
+    if (PS5_CreateSoftwarePresentation(_this, PS5_SOFTWARE_WIDTH,
+                                       PS5_SOFTWARE_HEIGHT) < 0) {
+        return -1;
+    }
     surface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 0, surface_format);
     if (!surface) {
+        PS5_DestroySoftwarePresentation(_this);
+        PS5_ReleasePresentation(_this, PS5_PRESENTATION_SOFTWARE);
         return -1;
     }
 
     /* Save the info and return! */
     window->surface = surface;
-    // *format = surface_format;
-    // *pixels = surface->pixels;
-    // *pitch = surface->pitch;
+    *format = surface_format;
+    *pixels = surface->pixels;
+    *pitch = surface->pitch;
     return 0;
 }
 
@@ -174,6 +314,9 @@ static int PS5_SetDisplayMode(_THIS, SDL_VideoDisplay * display,
     PS5_DeviceData *device_data = (PS5_DeviceData *)_this->driverdata;
     PS5_VideoAttr vattr = {0};
 
+    if (device_data->presentation_owner != PS5_PRESENTATION_SOFTWARE) {
+        return 0;
+    }
     if(device_data->evt_queue) {
         sceVideoOutDeleteFlipEvent(device_data->evt_queue, device_data->handle);
         sceKernelDeleteEqueue(device_data->evt_queue);
@@ -210,8 +353,6 @@ static int PS5_VideoInit(_THIS)
     PS5_DeviceData *device_data = (PS5_DeviceData *)_this->driverdata;
     SDL_VideoDisplay display;
     SDL_DisplayMode mode;
-    PS5_VideoAttr vattr;
-    void *vaddr = 0;
 
     SDL_zero(mode);
     mode.format = SDL_PIXELFORMAT_ABGR8888;
@@ -219,50 +360,8 @@ static int PS5_VideoInit(_THIS)
     mode.h = 1080;
     mode.refresh_rate = 60;
 
-    memset(device_data->vbuf, 0, sizeof(device_data->vbuf));
-    memset(&vattr, 0, sizeof(vattr));
-
     sceSystemServiceHideSplashScreen();
-    device_data->handle = sceVideoOutOpen(0xff, 0, 0, NULL);
-    if (device_data->handle < 0) {
-        return SDL_SetError("sceVideoOutOpen: %s", strerror(errno));
-    }
-    device_data->memsize = 0x4000000;
-    if (sceKernelAllocateMainDirectMemory(device_data->memsize, 0x20000, 3,
-                                          &device_data->paddr)) {
-        return SDL_SetError("sceKernelAllocateMainDirectMemory: %s",
-                            strerror(errno));
-    }
-
-    if (sceKernelMapDirectMemory(&vaddr, device_data->memsize, 0x33, 0,
-                                 device_data->paddr, 0x20000)) {
-        return SDL_SetError("sceKernelMapDirectMemory: %s", strerror(errno));
-    }
-
-    device_data->vbuf[0].data = vaddr;
-    device_data->vbuf[1].data = vaddr + (device_data->memsize / 2);
-
-    if (sceKernelCreateEqueue(&device_data->evt_queue, "flip queue")) {
-        return SDL_SetError("sceKernelCreateEqueue: %s", strerror(errno));
-    }
-
-    if (sceVideoOutAddFlipEvent(device_data->evt_queue, device_data->handle, 0)) {
-        return SDL_SetError("sceVideoOutAddFlipEvent: %s", strerror(errno));
-    }
-    if (sceVideoOutSetFlipRate(device_data->handle, 0)) {
-        return SDL_SetError("sceVideoOutSetFlipRate: %s", strerror(errno));
-    }
-
-    sceVideoOutSetBufferAttribute2(&vattr, 0x8000000022000000UL, 0,
-                                   mode.w, mode.h, 0, 0, 0);
-
-    if (sceVideoOutRegisterBuffers2(device_data->handle, 0, 0,
-                                    device_data->vbuf, 2, &vattr, 0, NULL)) {
-        return SDL_SetError("sceVideoOutRegisterBuffers2: %s", strerror(errno));
-    }
-
-    device_data->surface = SDL_CreateRGBSurfaceWithFormat(0, mode.w, mode.h, 32,
-                                                          mode.format);
+    device_data->handle = -1;
     SDL_zero(display);
     display.desktop_mode = mode;
     display.current_mode = mode;
@@ -276,18 +375,9 @@ static void PS5_VideoQuit(_THIS)
 {
     PS5_DeviceData *device_data = (PS5_DeviceData *)_this->driverdata;
 
-    if (device_data->handle != 0) {
-        sceVideoOutClose(device_data->handle);
-        device_data->handle = 0;
-    }
-
-    if (device_data->paddr) {
-        sceKernelReleaseDirectMemory(device_data->paddr, device_data->memsize);
-        device_data->paddr = 0;
-        device_data->memsize = 0;
-    }
-    if (device_data->evt_queue) {
-        sceKernelDeleteEqueue(device_data->evt_queue);
+    if (device_data->presentation_owner == PS5_PRESENTATION_SOFTWARE) {
+        PS5_DestroySoftwarePresentation(_this);
+        PS5_ReleasePresentation(_this, PS5_PRESENTATION_SOFTWARE);
     }
 }
 
