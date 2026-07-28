@@ -47,8 +47,8 @@ typedef struct PS5AGC_RenderData
 
 static int PS5AGC_SetError(const char *operation, int32_t error)
 {
-    return SDL_SetError("%s failed (OpenAGC error 0x%08x)", operation,
-                        (unsigned int)error);
+    return SDL_SetError("%s failed: %s (0x%08x)", operation,
+                        agcErrorString(error), (unsigned int)error);
 }
 
 static void PS5AGC_DestroyData(PS5AGC_RenderData *data)
@@ -281,6 +281,7 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
     }
     SW_SetRendererCallbacks(renderer, PS5AGC_Present,
                             PS5AGC_DestroyRenderer, PS5AGC_SetVSync, data);
+    renderer->WindowEvent = NULL;
     renderer->info = PS5AGC_RenderDriver.info;
     return renderer;
 
