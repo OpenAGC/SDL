@@ -127,9 +127,12 @@ compiler. Native planar YUV formats and their JPEG/BT.601/BT.709 shader variants
 remain a later renderer increment; SDL currently converts those formats to the
 advertised ABGR8888 texture format.
 
-The Prospero compile validation covers SDL itself plus `testgeometry`,
-`testrendercopyex`, and `testrendertarget`. Running and visually validating
-those programs still requires hardware accepted by OpenAGC.
+The Prospero build and link validation covers SDL itself plus `testgeometry`,
+`testrendercopyex`, and `testrendertarget`. Linking an OpenAGC consumer requires
+the SDK's `libSceAgcDriver` import stub, generated locally from a legally
+obtained firmware SPRX; the firmware binary is not distributed by SDL or
+OpenAGC. Running and visually validating those programs still requires hardware
+accepted by OpenAGC.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and
