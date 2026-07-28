@@ -91,3 +91,32 @@ FIFO/VSYNC only, disabling VSYNC fails instead of being emulated.
   OpenAGC APIs expose more.
 - OSMesa remains software-only; accelerated OpenGL is a Vulkan-PS5/Zink
   milestone.
+
+## Building the current integration
+
+OpenAGC remains opt-in. For a Prospero build, install a tagged OpenAGC package
+into the SDK sysroot (or set `OpenAGC_DIR` to its config-package directory),
+then configure SDL with:
+
+```sh
+prospero-cmake -S . -B build-ps5 \
+  -DSDL_PS5_OPENAGC=ON \
+  -DOpenAGC_DIR=/path/to/lib/cmake/OpenAGC
+cmake --build build-ps5
+```
+
+The repository helper accepts the same choice through the
+`SDL_PS5_OPENAGC` environment variable. Its default is `OFF`, preserving
+generic SDK builds.
+
+The integrated milestone provides exclusive lazy VideoOut ownership, clean
+fallback/error selection, OpenAGC mode discovery, three direct scanout
+buffers, per-slot bounded fences, GPU buffer-copy submission, readback,
+render targets, geometry/copy/copy-ex, scaling, clipping, blending, streaming
+locks, and SDL's YUV conversion coverage. Command rasterization currently uses
+SDL's common surface renderer into OpenAGC flexible memory; native AGC shader
+draw batching and native planar YUV shaders remain the next renderer milestone.
+
+Installed static CMake targets discover `OpenAGC::openagc` transitively.
+`sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and
+`SceAgcDriver` after SDL's existing platform dependencies.

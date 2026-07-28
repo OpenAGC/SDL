@@ -9,11 +9,14 @@ if [ -z "${PS5_PAYLOAD_SDK}" ]; then
     exit 1
 fi
 
+SDL_PS5_OPENAGC="${SDL_PS5_OPENAGC:-OFF}"
+
 source "${PS5_PAYLOAD_SDK}/toolchain/prospero.sh"
 
 ${CMAKE} -DCMAKE_BUILD_TYPE=Release \
 	 -DSDL_OPENGL=YES \
 	 -DSDL_LOADSO=YES \
+	 -DSDL_PS5_OPENAGC="${SDL_PS5_OPENAGC}" \
 	 -B build-ps5 \
          -S "${SCRIPT_DIR}/.."
 ${MAKE} -C build-ps5
