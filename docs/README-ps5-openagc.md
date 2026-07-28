@@ -37,8 +37,12 @@ modes, render targets, streaming locks, and readback. Commands are batched as
 position/UV/color vertices and SDL primitives expand to triangles.
 
 ABGR8888 is the canonical packed texture and target format. IYUV, YV12, NV12,
-and NV21 use R8 planes (and RG8 interleaved chroma), with JPEG, BT.601, and
-BT.709 conversion shaders. Plane order remains native for YV12 and NV21.
+and NV21 are advertised directly and use R8 planes (and RG8 interleaved
+chroma), with separate checked-in JPEG, BT.601, and BT.709 conversion shaders.
+YV12 binds its V/U storage in canonical shader order, while the NV21 RG8
+descriptor swaps VU to UV without a CPU RGB conversion. Planar streaming
+locks retain SDL's contiguous full-texture layout and publish into the aligned
+GPU planes when unlocked.
 
 Only OpenAGC-exposed presentation modes are supported. If OpenAGC provides
 FIFO/VSYNC only, disabling VSYNC fails instead of being emulated.
@@ -120,12 +124,11 @@ textures use flexible GPU-visible memory, and texture locks or updates publish
 only texture data. Readback invalidates and converts only the requested
 rectangle after a bounded GPU-to-host transition.
 
-The checked-in Wave32 PSBC shaders are built from
-`src/render/ps5agc/shaders/ps5agc.vert` and `ps5agc.frag`. Application and SDK
-builds consume their generated headers directly and do not invoke a shader
-compiler. Native planar YUV formats and their JPEG/BT.601/BT.709 shader variants
-remain a later renderer increment; SDL currently converts those formats to the
-advertised ABGR8888 texture format.
+The checked-in Wave32 PSBC shaders are built from the GLSL files under
+`src/render/ps5agc/shaders/`. Application and SDK builds consume their
+generated headers directly and do not invoke a shader compiler. In addition
+to the packed ABGR8888 shader, the tree contains planar and interleaved YUV
+variants for JPEG, BT.601, and BT.709 conversion.
 
 The Prospero build and link validation covers SDL itself plus `testgeometry`,
 `testrendercopyex`, and `testrendertarget`. On firmware 5.50 hardware,
@@ -136,8 +139,9 @@ VideoOut addresses share the required mapping and registration properties.
 Linking an OpenAGC consumer requires
 the SDK's `libSceAgcDriver` import stub, generated locally from a legally
 obtained firmware SPRX; the firmware binary is not distributed by SDL or
-OpenAGC. Running and visually validating those programs still requires hardware
-accepted by OpenAGC.
+OpenAGC. The YUV shaders and texture paths cross-build with the current
+OpenAGC/openagc-psbc revisions; their visual matrix/plane-order validation is
+still required on hardware accepted by OpenAGC.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and

@@ -27,6 +27,12 @@
 #include "shaders/ps5agc_ngg_front.h"
 #include "shaders/ps5agc_ngg_back.h"
 #include "shaders/ps5agc_frag.h"
+#include "shaders/ps5agc_yuv_planar_jpeg.h"
+#include "shaders/ps5agc_yuv_planar_bt601.h"
+#include "shaders/ps5agc_yuv_planar_bt709.h"
+#include "shaders/ps5agc_yuv_nv_jpeg.h"
+#include "shaders/ps5agc_yuv_nv_bt601.h"
+#include "shaders/ps5agc_yuv_nv_bt709.h"
 
 #define PS5AGC_BUFFER_COUNT 3u
 #define PS5AGC_COMMAND_BYTES (256u * 1024u)
@@ -37,6 +43,18 @@
 #define PS5AGC_DIRECT_ALIGNMENT (2u * 1024u * 1024u)
 #define PS5AGC_MAIN_DIRECT_ALIGNMENT (128u * 1024u)
 #define PS5AGC_DRAW_MODIFIER 0x40000000u
+
+typedef enum PS5AGC_ShaderKind
+{
+    PS5AGC_SHADER_RGBA,
+    PS5AGC_SHADER_PLANAR_JPEG,
+    PS5AGC_SHADER_PLANAR_BT601,
+    PS5AGC_SHADER_PLANAR_BT709,
+    PS5AGC_SHADER_NV_JPEG,
+    PS5AGC_SHADER_NV_BT601,
+    PS5AGC_SHADER_NV_BT709,
+    PS5AGC_SHADER_COUNT
+} PS5AGC_ShaderKind;
 
 typedef struct PS5AGC_Vertex
 {
@@ -50,8 +68,14 @@ typedef struct PS5AGC_TextureData
     AgcGpuMemory memory;
     AgcGfx1013CombinedImageSamplerDescriptor *descriptor;
     size_t descriptor_offset;
+    size_t plane_offset[3];
     size_t pixel_bytes;
+    size_t lock_bytes;
+    void *lock_buffer;
     int pitch;
+    int plane_pitch[3];
+    Uint32 format;
+    Uint32 plane_count;
     SDL_ScaleMode scale_mode;
     AgcGfx1013ResourceUsage usage;
 } PS5AGC_TextureData;
@@ -72,10 +96,10 @@ typedef struct PS5AGC_RenderData
     AgcGfx1013CombinedImageSamplerDescriptor *white_descriptor;
     AgcShaderRecord front_record;
     AgcShaderRecord back_record;
-    AgcShaderRecord pixel_record;
+    AgcShaderRecord pixel_records[PS5AGC_SHADER_COUNT];
     AgcShaderRecord fused_record;
     AgcRegisterValue fused_registers[32];
-    AgcGfx1013Wave32VsPsState shaders;
+    AgcGfx1013Wave32VsPsState shaders[PS5AGC_SHADER_COUNT];
     AgcGfx1013ResourceUsage display_usage[PS5AGC_BUFFER_COUNT];
     Uint64 frame_id;
     Uint32 fence_value;
@@ -165,18 +189,9 @@ static int PS5AGC_InitDescriptor(PS5AGC_TextureData *texture,
 {
     AgcGfx1013Image2DState image;
     AgcSamplerDescriptor sampler;
+    Uint32 plane;
     int32_t error;
 
-    SDL_zero(image);
-    image.address = texture->memory.gpu_address;
-    image.width = (Uint32)width;
-    image.height = (Uint32)height;
-    image.format = AGC_GFX1013_IMAGE_FORMAT_RGBA8_UNORM;
-    image.image_type = AGC_GFX1013_IMAGE_TYPE_2D;
-    image.dst_sel_x = 4u;
-    image.dst_sel_y = 5u;
-    image.dst_sel_z = 6u;
-    image.dst_sel_w = 7u;
     agcSamplerDescriptorInit(&sampler);
     agcSamplerDescriptorSetClampMode(&sampler, kAgcClampClamp,
                                      kAgcClampClamp, kAgcClampClamp);
@@ -185,23 +200,54 @@ static int PS5AGC_InitDescriptor(PS5AGC_TextureData *texture,
         texture->scale_mode == SDL_ScaleModeNearest ? kAgcFilterPoint : kAgcFilterBilinear,
         texture->scale_mode == SDL_ScaleModeNearest ? kAgcFilterPoint : kAgcFilterBilinear,
         kAgcMipFilterNone);
-    error = agcGfx1013CombinedImageSamplerDescriptorEncode(
-        texture->descriptor, &image, &sampler);
-    if (error != AGC_OK) {
-        return PS5AGC_SetError("encoding an OpenAGC texture descriptor", error);
+
+    for (plane = 0; plane < texture->plane_count; ++plane) {
+        SDL_zero(image);
+        image.address = texture->memory.gpu_address + texture->plane_offset[plane];
+        image.width = plane == 0 ? (Uint32)width : ((Uint32)width + 1u) / 2u;
+        image.height = plane == 0 ? (Uint32)height : ((Uint32)height + 1u) / 2u;
+        image.image_type = AGC_GFX1013_IMAGE_TYPE_2D;
+        image.dst_sel_x = 4u;
+        image.dst_sel_y = 5u;
+        image.dst_sel_z = 6u;
+        image.dst_sel_w = 7u;
+        if (texture->format == SDL_PIXELFORMAT_ABGR8888) {
+            image.format = AGC_GFX1013_IMAGE_FORMAT_RGBA8_UNORM;
+        } else if (texture->format == SDL_PIXELFORMAT_NV12 ||
+                   texture->format == SDL_PIXELFORMAT_NV21) {
+            image.format = plane == 0 ?
+                agcTextureFormatEncode(kAgcDataFormat8, kAgcNumberUnorm) :
+                agcTextureFormatEncode(kAgcDataFormat8_8, kAgcNumberUnorm);
+            if (plane == 0) {
+                image.dst_sel_y = image.dst_sel_z = 4u;
+            } else if (texture->format == SDL_PIXELFORMAT_NV21) {
+                image.dst_sel_x = 5u;
+                image.dst_sel_y = 4u;
+            }
+        } else {
+            image.format = agcTextureFormatEncode(kAgcDataFormat8, kAgcNumberUnorm);
+            image.dst_sel_y = image.dst_sel_z = 4u;
+        }
+        error = agcGfx1013CombinedImageSamplerDescriptorEncode(
+            &texture->descriptor[plane], &image, &sampler);
+        if (error != AGC_OK) {
+            return PS5AGC_SetError("encoding an OpenAGC texture descriptor", error);
+        }
     }
     return PS5AGC_Flush(&texture->memory, texture->descriptor_offset,
-                        sizeof(*texture->descriptor), "publishing a texture descriptor");
+                        texture->plane_count * sizeof(*texture->descriptor),
+                        "publishing texture descriptors");
 }
 
 static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
 {
     size_t front_offset = 0u;
     size_t back_offset;
-    size_t pixel_offset;
+    size_t shader_offset;
     const AgcShaderRecord *file_record;
     size_t code_offset;
     size_t code_size;
+    Uint32 shader;
     int32_t error;
 
     error = agcShaderRecordRelocateBinary(&data->front_record,
@@ -213,10 +259,22 @@ static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
                                               ps5agc_ngg_back_sb_len);
     }
     if (error == AGC_OK) {
-        error = agcShaderRecordRelocateBinary(&data->pixel_record,
+        error = agcShaderRecordRelocateBinary(&data->pixel_records[PS5AGC_SHADER_RGBA],
                                               ps5agc_frag_sb,
                                               ps5agc_frag_sb_len);
     }
+#define PS5AGC_RELOCATE_PIXEL(kind, blob)                                      \
+    if (error == AGC_OK) {                                                     \
+        error = agcShaderRecordRelocateBinary(&data->pixel_records[(kind)],    \
+                                               (blob), sizeof(blob));           \
+    }
+    PS5AGC_RELOCATE_PIXEL(PS5AGC_SHADER_PLANAR_JPEG, ps5agc_yuv_planar_jpeg_sb);
+    PS5AGC_RELOCATE_PIXEL(PS5AGC_SHADER_PLANAR_BT601, ps5agc_yuv_planar_bt601_sb);
+    PS5AGC_RELOCATE_PIXEL(PS5AGC_SHADER_PLANAR_BT709, ps5agc_yuv_planar_bt709_sb);
+    PS5AGC_RELOCATE_PIXEL(PS5AGC_SHADER_NV_JPEG, ps5agc_yuv_nv_jpeg_sb);
+    PS5AGC_RELOCATE_PIXEL(PS5AGC_SHADER_NV_BT601, ps5agc_yuv_nv_bt601_sb);
+    PS5AGC_RELOCATE_PIXEL(PS5AGC_SHADER_NV_BT709, ps5agc_yuv_nv_bt709_sb);
+#undef PS5AGC_RELOCATE_PIXEL
     if (error != AGC_OK) {
         return PS5AGC_SetError("relocating checked-in PSBC shaders", error);
     }
@@ -229,6 +287,10 @@ static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
             return SDL_SetError("checked-in PSBC shader has an invalid code offset");   \
         }                                                                                \
         code_size = sizeof(blob) - code_offset;                                          \
+        if ((offset) > data->shader_memory.size ||                                       \
+            code_size > data->shader_memory.size - (offset)) {                           \
+            return SDL_SetError("checked-in PSBC shaders exceed the shader pool");      \
+        }                                                                                \
         SDL_memcpy((Uint8 *)data->shader_memory.cpu_address + (offset),                  \
                    (const Uint8 *)(blob) + code_offset, code_size);                       \
         (record).code = data->shader_memory.gpu_address + (offset);                       \
@@ -238,14 +300,27 @@ static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
     PS5AGC_UPLOAD_SHADER(ps5agc_ngg_front_sb, data->front_record, front_offset);
     back_offset = front_offset;
     PS5AGC_UPLOAD_SHADER(ps5agc_ngg_back_sb, data->back_record, back_offset);
-    pixel_offset = back_offset;
-    PS5AGC_UPLOAD_SHADER(ps5agc_frag_sb, data->pixel_record, pixel_offset);
+    shader_offset = back_offset;
+    PS5AGC_UPLOAD_SHADER(ps5agc_frag_sb,
+        data->pixel_records[PS5AGC_SHADER_RGBA], shader_offset);
+    PS5AGC_UPLOAD_SHADER(ps5agc_yuv_planar_jpeg_sb,
+        data->pixel_records[PS5AGC_SHADER_PLANAR_JPEG], shader_offset);
+    PS5AGC_UPLOAD_SHADER(ps5agc_yuv_planar_bt601_sb,
+        data->pixel_records[PS5AGC_SHADER_PLANAR_BT601], shader_offset);
+    PS5AGC_UPLOAD_SHADER(ps5agc_yuv_planar_bt709_sb,
+        data->pixel_records[PS5AGC_SHADER_PLANAR_BT709], shader_offset);
+    PS5AGC_UPLOAD_SHADER(ps5agc_yuv_nv_jpeg_sb,
+        data->pixel_records[PS5AGC_SHADER_NV_JPEG], shader_offset);
+    PS5AGC_UPLOAD_SHADER(ps5agc_yuv_nv_bt601_sb,
+        data->pixel_records[PS5AGC_SHADER_NV_BT601], shader_offset);
+    PS5AGC_UPLOAD_SHADER(ps5agc_yuv_nv_bt709_sb,
+        data->pixel_records[PS5AGC_SHADER_NV_BT709], shader_offset);
 #undef PS5AGC_UPLOAD_SHADER
 
-    if (pixel_offset > data->shader_memory.size) {
+    if (shader_offset > data->shader_memory.size) {
         return SDL_SetError("checked-in PSBC shaders exceed the OpenAGC shader pool");
     }
-    if (PS5AGC_Flush(&data->shader_memory, 0, pixel_offset,
+    if (PS5AGC_Flush(&data->shader_memory, 0, shader_offset,
                      "publishing checked-in PSBC shaders") < 0) {
         return -1;
     }
@@ -256,20 +331,26 @@ static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
         return PS5AGC_SetError("fusing checked-in PSBC shader halves", error);
     }
     SDL_zero(data->shaders);
-    data->shaders.primitive.record = &data->fused_record;
-    data->shaders.primitive.sh_registers = data->fused_registers;
-    data->shaders.primitive.num_sh_registers = data->fused_record.num_sh_registers;
-    data->shaders.primitive.cx_registers = (const AgcRegisterValue *)(uintptr_t)data->back_record.cx_registers;
-    data->shaders.primitive.num_cx_registers = data->back_record.num_cx_registers;
-    data->shaders.primitive.code_address = data->back_record.code;
-    data->shaders.pixel.record = &data->pixel_record;
-    data->shaders.pixel.sh_registers = (const AgcRegisterValue *)(uintptr_t)data->pixel_record.sh_registers;
-    data->shaders.pixel.num_sh_registers = data->pixel_record.num_sh_registers;
-    data->shaders.pixel.cx_registers = (const AgcRegisterValue *)(uintptr_t)data->pixel_record.cx_registers;
-    data->shaders.pixel.num_cx_registers = data->pixel_record.num_cx_registers;
-    data->shaders.pixel.code_address = data->pixel_record.code;
-    data->shaders.primitive_back_code_address = data->back_record.code;
-    data->shaders.primitive_type = 4u; /* triangle list */
+    for (shader = 0; shader < PS5AGC_SHADER_COUNT; ++shader) {
+        AgcShaderRecord *pixel = &data->pixel_records[shader];
+        data->shaders[shader].primitive.record = &data->fused_record;
+        data->shaders[shader].primitive.sh_registers = data->fused_registers;
+        data->shaders[shader].primitive.num_sh_registers = data->fused_record.num_sh_registers;
+        data->shaders[shader].primitive.cx_registers =
+            (const AgcRegisterValue *)(uintptr_t)data->back_record.cx_registers;
+        data->shaders[shader].primitive.num_cx_registers = data->back_record.num_cx_registers;
+        data->shaders[shader].primitive.code_address = data->back_record.code;
+        data->shaders[shader].pixel.record = pixel;
+        data->shaders[shader].pixel.sh_registers =
+            (const AgcRegisterValue *)(uintptr_t)pixel->sh_registers;
+        data->shaders[shader].pixel.num_sh_registers = pixel->num_sh_registers;
+        data->shaders[shader].pixel.cx_registers =
+            (const AgcRegisterValue *)(uintptr_t)pixel->cx_registers;
+        data->shaders[shader].pixel.num_cx_registers = pixel->num_cx_registers;
+        data->shaders[shader].pixel.code_address = pixel->code;
+        data->shaders[shader].primitive_back_code_address = data->back_record.code;
+        data->shaders[shader].primitive_type = 4u; /* triangle list */
+    }
     return 0;
 }
 
@@ -331,13 +412,25 @@ static SDL_bool PS5AGC_SupportsBlendMode(SDL_Renderer *renderer,
 static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 {
     PS5AGC_TextureData *data;
-    size_t pixels;
+    size_t y_bytes;
+    size_t chroma_bytes;
+    size_t v_offset;
     size_t allocation;
+    int chroma_width;
+    int chroma_height;
     int32_t error;
     (void)renderer;
 
-    if (texture->format != SDL_PIXELFORMAT_ABGR8888) {
-        return SDL_SetError("ps5agc accepts ABGR8888 textures after SDL conversion");
+    if (texture->format != SDL_PIXELFORMAT_ABGR8888 &&
+        texture->format != SDL_PIXELFORMAT_IYUV &&
+        texture->format != SDL_PIXELFORMAT_YV12 &&
+        texture->format != SDL_PIXELFORMAT_NV12 &&
+        texture->format != SDL_PIXELFORMAT_NV21) {
+        return SDL_SetError("unsupported ps5agc texture format");
+    }
+    if (texture->access == SDL_TEXTUREACCESS_TARGET &&
+        texture->format != SDL_PIXELFORMAT_ABGR8888) {
+        return SDL_SetError("ps5agc render targets must use ABGR8888");
     }
     if (texture->w <= 0 || texture->h <= 0 ||
         (size_t)texture->w > SIZE_MAX / 4u / (size_t)texture->h) {
@@ -347,11 +440,49 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     if (!data) {
         return SDL_OutOfMemory();
     }
-    data->pitch = texture->w * 4;
-    pixels = (size_t)data->pitch * texture->h;
-    data->pixel_bytes = pixels;
-    data->descriptor_offset = PS5AGC_Align(pixels, 256u);
-    allocation = data->descriptor_offset + sizeof(*data->descriptor);
+    data->format = texture->format;
+    data->scale_mode = texture->scaleMode;
+    if (texture->format == SDL_PIXELFORMAT_ABGR8888) {
+        data->pitch = texture->w * 4;
+        data->plane_pitch[0] = data->pitch;
+        data->plane_count = 1u;
+        data->pixel_bytes = (size_t)data->pitch * texture->h;
+    } else {
+        chroma_width = (texture->w + 1) / 2;
+        chroma_height = (texture->h + 1) / 2;
+        data->pitch = texture->w;
+        data->plane_pitch[0] = texture->w;
+        y_bytes = (size_t)texture->w * texture->h;
+        if (texture->format == SDL_PIXELFORMAT_NV12 ||
+            texture->format == SDL_PIXELFORMAT_NV21) {
+            data->plane_count = 2u;
+            data->plane_pitch[1] = chroma_width * 2;
+            data->plane_offset[1] = PS5AGC_Align(y_bytes, 256u);
+            chroma_bytes = (size_t)data->plane_pitch[1] * chroma_height;
+            data->lock_bytes = y_bytes + chroma_bytes;
+            data->pixel_bytes = data->plane_offset[1] + chroma_bytes;
+        } else {
+            data->plane_count = 3u;
+            data->plane_pitch[1] = chroma_width;
+            data->plane_pitch[2] = chroma_width;
+            chroma_bytes = (size_t)chroma_width * chroma_height;
+            data->lock_bytes = y_bytes + chroma_bytes * 2u;
+            if (texture->format == SDL_PIXELFORMAT_IYUV) {
+                data->plane_offset[1] = PS5AGC_Align(y_bytes, 256u);
+                data->plane_offset[2] = PS5AGC_Align(
+                    data->plane_offset[1] + chroma_bytes, 256u);
+                data->pixel_bytes = data->plane_offset[2] + chroma_bytes;
+            } else {
+                v_offset = PS5AGC_Align(y_bytes, 256u);
+                data->plane_offset[1] = PS5AGC_Align(v_offset + chroma_bytes, 256u);
+                data->plane_offset[2] = v_offset;
+                data->pixel_bytes = data->plane_offset[1] + chroma_bytes;
+            }
+        }
+    }
+    data->descriptor_offset = PS5AGC_Align(data->pixel_bytes, 256u);
+    allocation = data->descriptor_offset +
+        data->plane_count * sizeof(*data->descriptor);
     error = agcGpuMemoryAllocateFlexible(&data->memory, allocation, 256u,
                                          "SDL ps5agc texture");
     if (error != AGC_OK) {
@@ -360,7 +491,6 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     }
     data->descriptor = (AgcGfx1013CombinedImageSamplerDescriptor *)
         ((Uint8 *)data->memory.cpu_address + data->descriptor_offset);
-    data->scale_mode = texture->scaleMode;
     data->usage = AGC_GFX1013_RESOURCE_USAGE_UNDEFINED;
     texture->driverdata = data;
     if (PS5AGC_InitDescriptor(data, texture->w, texture->h) < 0) {
@@ -372,26 +502,97 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     return 0;
 }
 
+static void PS5AGC_CopyPlane(PS5AGC_TextureData *data, Uint32 plane,
+                             int x, int y, int width, int height,
+                             int bytes_per_sample, const Uint8 *pixels,
+                             int pitch)
+{
+    Uint8 *dst = (Uint8 *)data->memory.cpu_address + data->plane_offset[plane] +
+        (size_t)y * data->plane_pitch[plane] + (size_t)x * bytes_per_sample;
+    int row;
+
+    for (row = 0; row < height; ++row) {
+        SDL_memcpy(dst, pixels, (size_t)width * bytes_per_sample);
+        dst += data->plane_pitch[plane];
+        pixels += pitch;
+    }
+}
+
+static int PS5AGC_FinishTextureUpdate(PS5AGC_TextureData *data)
+{
+    data->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
+    return PS5AGC_Flush(&data->memory, 0, data->pixel_bytes,
+                        "publishing an OpenAGC texture update");
+}
+
+static int PS5AGC_UpdateTextureYUV(SDL_Renderer *renderer, SDL_Texture *texture,
+                                   const SDL_Rect *rect,
+                                   const Uint8 *Yplane, int Ypitch,
+                                   const Uint8 *Uplane, int Upitch,
+                                   const Uint8 *Vplane, int Vpitch)
+{
+    PS5AGC_TextureData *data = (PS5AGC_TextureData *)texture->driverdata;
+    const int chroma_width = (rect->w + 1) / 2;
+    const int chroma_height = (rect->h + 1) / 2;
+    (void)renderer;
+
+    PS5AGC_CopyPlane(data, 0u, rect->x, rect->y, rect->w, rect->h,
+                     1, Yplane, Ypitch);
+    PS5AGC_CopyPlane(data, 1u, rect->x / 2, rect->y / 2,
+                     chroma_width, chroma_height, 1, Uplane, Upitch);
+    PS5AGC_CopyPlane(data, 2u, rect->x / 2, rect->y / 2,
+                     chroma_width, chroma_height, 1, Vplane, Vpitch);
+    return PS5AGC_FinishTextureUpdate(data);
+}
+
+static int PS5AGC_UpdateTextureNV(SDL_Renderer *renderer, SDL_Texture *texture,
+                                  const SDL_Rect *rect,
+                                  const Uint8 *Yplane, int Ypitch,
+                                  const Uint8 *UVplane, int UVpitch)
+{
+    PS5AGC_TextureData *data = (PS5AGC_TextureData *)texture->driverdata;
+    const int chroma_width = (rect->w + 1) / 2;
+    const int chroma_height = (rect->h + 1) / 2;
+    (void)renderer;
+
+    PS5AGC_CopyPlane(data, 0u, rect->x, rect->y, rect->w, rect->h,
+                     1, Yplane, Ypitch);
+    PS5AGC_CopyPlane(data, 1u, rect->x / 2, rect->y / 2,
+                     chroma_width, chroma_height, 2, UVplane, UVpitch);
+    return PS5AGC_FinishTextureUpdate(data);
+}
+
 static int PS5AGC_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
                                 const SDL_Rect *rect, const void *pixels,
                                 int pitch)
 {
     PS5AGC_TextureData *data = (PS5AGC_TextureData *)texture->driverdata;
-    Uint8 *dst = (Uint8 *)data->memory.cpu_address + rect->y * data->pitch + rect->x * 4;
-    const Uint8 *src = (const Uint8 *)pixels;
-    int row;
-    (void)renderer;
+    const Uint8 *Yplane = (const Uint8 *)pixels;
+    const Uint8 *first_chroma;
+    const Uint8 *second_chroma;
+    const int chroma_height = (rect->h + 1) / 2;
+    const int chroma_pitch = (pitch + 1) / 2;
 
-    for (row = 0; row < rect->h; ++row) {
-        SDL_memcpy(dst, src, (size_t)rect->w * 4u);
-        dst += data->pitch;
-        src += pitch;
+    if (texture->format == SDL_PIXELFORMAT_ABGR8888) {
+        PS5AGC_CopyPlane(data, 0u, rect->x, rect->y, rect->w, rect->h,
+                         4, Yplane, pitch);
+        return PS5AGC_FinishTextureUpdate(data);
     }
-    data->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
-    return PS5AGC_Flush(&data->memory,
-                        (size_t)rect->y * data->pitch,
-                        (size_t)rect->h * data->pitch,
-                        "publishing an OpenAGC texture update");
+    first_chroma = Yplane + (size_t)pitch * rect->h;
+    if (texture->format == SDL_PIXELFORMAT_NV12 ||
+        texture->format == SDL_PIXELFORMAT_NV21) {
+        return PS5AGC_UpdateTextureNV(renderer, texture, rect, Yplane, pitch,
+                                      first_chroma, chroma_pitch * 2);
+    }
+    second_chroma = first_chroma + (size_t)chroma_pitch * chroma_height;
+    if (texture->format == SDL_PIXELFORMAT_YV12) {
+        return PS5AGC_UpdateTextureYUV(renderer, texture, rect, Yplane, pitch,
+                                       second_chroma, chroma_pitch,
+                                       first_chroma, chroma_pitch);
+    }
+    return PS5AGC_UpdateTextureYUV(renderer, texture, rect, Yplane, pitch,
+                                   first_chroma, chroma_pitch,
+                                   second_chroma, chroma_pitch);
 }
 
 static int PS5AGC_LockTexture(SDL_Renderer *renderer, SDL_Texture *texture,
@@ -399,7 +600,24 @@ static int PS5AGC_LockTexture(SDL_Renderer *renderer, SDL_Texture *texture,
 {
     PS5AGC_TextureData *data = (PS5AGC_TextureData *)texture->driverdata;
     (void)renderer;
-    *pixels = (Uint8 *)data->memory.cpu_address + rect->y * data->pitch + rect->x * 4;
+
+    if (texture->format != SDL_PIXELFORMAT_ABGR8888) {
+        if (rect->x != 0 || rect->y != 0 ||
+            rect->w != texture->w || rect->h != texture->h) {
+            return SDL_SetError("planar ps5agc textures only support full locks");
+        }
+        if (!data->lock_buffer) {
+            data->lock_buffer = SDL_malloc(data->lock_bytes);
+            if (!data->lock_buffer) {
+                return SDL_OutOfMemory();
+            }
+        }
+        *pixels = data->lock_buffer;
+        *pitch = data->pitch;
+        return 0;
+    }
+    *pixels = (Uint8 *)data->memory.cpu_address + data->plane_offset[0] +
+        (size_t)rect->y * data->pitch + (size_t)rect->x * 4u;
     *pitch = data->pitch;
     return 0;
 }
@@ -408,6 +626,14 @@ static void PS5AGC_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 {
     PS5AGC_TextureData *data = (PS5AGC_TextureData *)texture->driverdata;
     (void)renderer;
+    if (data->lock_buffer) {
+        SDL_Rect rect = { 0, 0, texture->w, texture->h };
+        if (PS5AGC_UpdateTexture(renderer, texture, &rect,
+                                 data->lock_buffer, data->pitch) < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_RENDER, "%s", SDL_GetError());
+        }
+        return;
+    }
     data->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
     if (PS5AGC_Flush(&data->memory, 0, data->pixel_bytes,
                      "publishing a locked OpenAGC texture") < 0) {
@@ -563,6 +789,28 @@ static void PS5AGC_TransformVertices(PS5AGC_Vertex *vertices, size_t count,
     }
 }
 
+static PS5AGC_ShaderKind PS5AGC_SelectShader(SDL_Texture *texture)
+{
+    SDL_YUV_CONVERSION_MODE mode;
+    SDL_bool nv;
+
+    if (!texture || texture->format == SDL_PIXELFORMAT_ABGR8888) {
+        return PS5AGC_SHADER_RGBA;
+    }
+    nv = texture->format == SDL_PIXELFORMAT_NV12 ||
+         texture->format == SDL_PIXELFORMAT_NV21;
+    mode = SDL_GetYUVConversionModeForResolution(texture->w, texture->h);
+    switch (mode) {
+    case SDL_YUV_CONVERSION_JPEG:
+        return nv ? PS5AGC_SHADER_NV_JPEG : PS5AGC_SHADER_PLANAR_JPEG;
+    case SDL_YUV_CONVERSION_BT709:
+        return nv ? PS5AGC_SHADER_NV_BT709 : PS5AGC_SHADER_PLANAR_BT709;
+    case SDL_YUV_CONVERSION_BT601:
+    default:
+        return nv ? PS5AGC_SHADER_NV_BT601 : PS5AGC_SHADER_PLANAR_BT601;
+    }
+}
+
 static int PS5AGC_RecordDraw(PS5AGC_RenderData *data, SceAgcCb *cb,
                               const PS5AGC_Vertex *source, size_t count,
                               SDL_Texture *texture, SDL_BlendMode blend,
@@ -610,7 +858,7 @@ static int PS5AGC_RecordDraw(PS5AGC_RenderData *data, SceAgcCb *cb,
         texture_data->memory.gpu_address + texture_data->descriptor_offset :
         data->white_memory.gpu_address + 256u;
     SDL_zero(draw);
-    draw.shaders = data->shaders;
+    draw.shaders = data->shaders[PS5AGC_SelectShader(texture)];
     draw.frame = frame;
     draw.primitive_resource_tables = &primitive_table;
     draw.num_primitive_resource_tables = 1u;
@@ -874,6 +1122,7 @@ static void PS5AGC_DestroyTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     PS5AGC_TextureData *data = (PS5AGC_TextureData *)texture->driverdata;
     (void)renderer;
     if (data) {
+        SDL_free(data->lock_buffer);
         agcGpuMemoryFreeFlexible(&data->memory);
         SDL_free(data);
         texture->driverdata = NULL;
@@ -925,6 +1174,8 @@ static int PS5AGC_InitWhiteTexture(PS5AGC_RenderData *data)
     white.memory = data->white_memory;
     white.descriptor = data->white_descriptor;
     white.descriptor_offset = descriptor_offset;
+    white.format = SDL_PIXELFORMAT_ABGR8888;
+    white.plane_count = 1u;
     white.scale_mode = SDL_ScaleModeNearest;
     if (PS5AGC_InitDescriptor(&white, 1, 1) < 0) {
         return -1;
@@ -1058,6 +1309,10 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
     renderer->SupportsBlendMode = PS5AGC_SupportsBlendMode;
     renderer->CreateTexture = PS5AGC_CreateTexture;
     renderer->UpdateTexture = PS5AGC_UpdateTexture;
+#if SDL_HAVE_YUV
+    renderer->UpdateTextureYUV = PS5AGC_UpdateTextureYUV;
+    renderer->UpdateTextureNV = PS5AGC_UpdateTextureNV;
+#endif
     renderer->LockTexture = PS5AGC_LockTexture;
     renderer->UnlockTexture = PS5AGC_UnlockTexture;
     renderer->SetTextureScaleMode = PS5AGC_SetTextureScaleMode;
@@ -1089,8 +1344,10 @@ SDL_RenderDriver PS5AGC_RenderDriver = {
         "ps5agc",
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE |
             SDL_RENDERER_PRESENTVSYNC,
-        1,
-        { SDL_PIXELFORMAT_ABGR8888 },
+        5,
+        { SDL_PIXELFORMAT_ABGR8888, SDL_PIXELFORMAT_IYUV,
+          SDL_PIXELFORMAT_YV12, SDL_PIXELFORMAT_NV12,
+          SDL_PIXELFORMAT_NV21 },
         16384,
         16384
     }
