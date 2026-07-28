@@ -128,7 +128,12 @@ remain a later renderer increment; SDL currently converts those formats to the
 advertised ABGR8888 texture format.
 
 The Prospero build and link validation covers SDL itself plus `testgeometry`,
-`testrendercopyex`, and `testrendertarget`. Linking an OpenAGC consumer requires
+`testrendercopyex`, and `testrendertarget`. On firmware 5.50 hardware,
+`testgeometry` has also validated native 1920x1080 OpenAGC initialization,
+VideoOut registration, shader execution, indexed geometry, and presentation.
+The three scanout images occupy one aligned main-direct allocation so their
+VideoOut addresses share the required mapping and registration properties.
+Linking an OpenAGC consumer requires
 the SDK's `libSceAgcDriver` import stub, generated locally from a legally
 obtained firmware SPRX; the firmware binary is not distributed by SDL or
 OpenAGC. Running and visually validating those programs still requires hardware
