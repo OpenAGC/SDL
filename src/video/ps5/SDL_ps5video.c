@@ -90,10 +90,11 @@ static void PS5_DestroySoftwarePresentation(_THIS)
         munmap(device_data->vbuf[0].data, device_data->memsize);
         SDL_memset(device_data->vbuf, 0, sizeof(device_data->vbuf));
     }
-    if (device_data->paddr) {
+    if (device_data->direct_memory_allocated) {
         sceKernelReleaseDirectMemory(device_data->paddr,
                                      device_data->memsize);
         device_data->paddr = 0;
+        device_data->direct_memory_allocated = SDL_FALSE;
     }
     device_data->memsize = 0;
     SDL_FreeSurface(device_data->surface);
@@ -122,6 +123,7 @@ static int PS5_CreateSoftwarePresentation(_THIS, int width, int height)
         SDL_SetError("sceKernelAllocateMainDirectMemory: %s", strerror(errno));
         goto fail;
     }
+    device_data->direct_memory_allocated = SDL_TRUE;
     if (sceKernelMapDirectMemory(&vaddr, device_data->memsize, 0x33, 0,
                                  device_data->paddr, 0x20000)) {
         SDL_SetError("sceKernelMapDirectMemory: %s", strerror(errno));
