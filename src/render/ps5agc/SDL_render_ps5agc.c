@@ -9,7 +9,7 @@
 
 #include "../../SDL_internal.h"
 
-#if SDL_VIDEO_RENDER_PS5AGC
+#ifdef SDL_VIDEO_RENDER_PS5AGC
 
 #include "../SDL_sysrender.h"
 #include "../software/SDL_render_sw_c.h"
@@ -95,7 +95,9 @@ static int PS5AGC_Present(SDL_Renderer *renderer, void *userdata)
     PS5AGC_RenderData *data = (PS5AGC_RenderData *)userdata;
     const Uint32 index = (Uint32)(data->frame_id % PS5AGC_BUFFER_COUNT);
     const Uint32 fence_value = (Uint32)(data->frame_id + 1u);
-    volatile Uint32 *fence = (volatile Uint32 *)data->fence_memory.cpu_address;
+    const size_t fence_offset = (size_t)index * sizeof(Uint32);
+    volatile Uint32 *fences =
+        (volatile Uint32 *)data->fence_memory.cpu_address;
     AgcGfx1013ResourceTransition transition;
     AgcCommandBufferSubmit submit;
     SceAgcCb cb;
@@ -103,7 +105,7 @@ static int PS5AGC_Present(SDL_Renderer *renderer, void *userdata)
 
     (void)renderer;
     if (data->submitted_fence[index]) {
-        error = agcGpuMemoryWait32(&data->fence_memory, 0,
+        error = agcGpuMemoryWait32(&data->fence_memory, fence_offset,
                                    data->submitted_fence[index],
                                    PS5AGC_GPU_TIMEOUT_US);
         if (error != AGC_OK) {
@@ -114,8 +116,9 @@ static int PS5AGC_Present(SDL_Renderer *renderer, void *userdata)
     if (error != AGC_OK) {
         return PS5AGC_SetError("publishing the SDL render target", error);
     }
-    *fence = 0;
-    error = agcGpuMemoryFlush(&data->fence_memory, 0, sizeof(*fence));
+    fences[index] = 0;
+    error = agcGpuMemoryFlush(&data->fence_memory, fence_offset,
+                              sizeof(fences[index]));
     if (error != AGC_OK) {
         return PS5AGC_SetError("resetting the OpenAGC fence", error);
     }
@@ -140,12 +143,18 @@ static int PS5AGC_Present(SDL_Renderer *renderer, void *userdata)
     if (error == AGC_OK) {
         transition.before = AGC_GFX1013_RESOURCE_USAGE_COPY_DESTINATION;
         transition.after = AGC_GFX1013_RESOURCE_USAGE_PRESENT;
-        transition.completion_address = data->fence_memory.gpu_address;
+        transition.completion_address = data->fence_memory.gpu_address +
+                                        fence_offset;
         transition.completion_value = fence_value;
         error = agcGfx1013TransitionResource(&cb, &transition);
     }
     if (error != AGC_OK) {
         return PS5AGC_SetError("recording the OpenAGC presentation copy", error);
+    }
+    error = agcGpuMemoryFlush(&data->command_memory, 0,
+                              (size_t)agcCbUsedDwords(&cb) * sizeof(Uint32));
+    if (error != AGC_OK) {
+        return PS5AGC_SetError("publishing the OpenAGC command buffer", error);
     }
 
     submit.command_address = data->command_memory.gpu_address;
@@ -156,7 +165,7 @@ static int PS5AGC_Present(SDL_Renderer *renderer, void *userdata)
         return PS5AGC_SetError("submitting the OpenAGC command buffer", error);
     }
     data->submitted_fence[index] = fence_value;
-    error = agcGpuMemoryWait32(&data->fence_memory, 0, fence_value,
+    error = agcGpuMemoryWait32(&data->fence_memory, fence_offset, fence_value,
                                PS5AGC_GPU_TIMEOUT_US);
     if (error != AGC_OK) {
         return PS5AGC_SetError("waiting for the OpenAGC presentation copy", error);
@@ -238,7 +247,8 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
     }
     if (error == AGC_OK) {
         error = agcGpuMemoryAllocateFlexible(&data->fence_memory,
-                                             sizeof(Uint32), 4,
+                                             PS5AGC_BUFFER_COUNT * sizeof(Uint32),
+                                             4,
                                              "SDL ps5agc fence");
     }
     if (error != AGC_OK) {
