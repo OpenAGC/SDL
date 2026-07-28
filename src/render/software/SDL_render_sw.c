@@ -48,6 +48,10 @@ typedef struct
 {
     SDL_Surface *surface;
     SDL_Surface *window;
+    SW_RenderPresentCallback present;
+    SW_DestroyRendererCallback destroy;
+    SW_SetVSyncCallback set_vsync;
+    void *callback_userdata;
 } SW_RenderData;
 
 static SDL_Surface *SW_ActivateRenderer(SDL_Renderer *renderer)
@@ -963,8 +967,12 @@ static int SW_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect *rect,
 
 static int SW_RenderPresent(SDL_Renderer *renderer)
 {
+    SW_RenderData *data = (SW_RenderData *)renderer->driverdata;
     SDL_Window *window = renderer->window;
 
+    if (data->present) {
+        return data->present(renderer, data->callback_userdata);
+    }
     if (!window) {
         return -1;
     }
@@ -983,11 +991,40 @@ static void SW_DestroyRenderer(SDL_Renderer *renderer)
     SDL_Window *window = renderer->window;
     SW_RenderData *data = (SW_RenderData *)renderer->driverdata;
 
-    if (window) {
+    if (data->destroy) {
+        data->destroy(renderer, data->callback_userdata);
+    } else if (window) {
         SDL_DestroyWindowSurface(window);
     }
     SDL_free(data);
     SDL_free(renderer);
+}
+
+static int SW_SetVSync(SDL_Renderer *renderer, int vsync)
+{
+    SW_RenderData *data = (SW_RenderData *)renderer->driverdata;
+
+    if (data->set_vsync) {
+        return data->set_vsync(renderer, vsync, data->callback_userdata);
+    }
+    return SDL_Unsupported();
+}
+
+void SW_SetRendererCallbacks(SDL_Renderer *renderer,
+                             SW_RenderPresentCallback present,
+                             SW_DestroyRendererCallback destroy,
+                             SW_SetVSyncCallback set_vsync,
+                             void *userdata)
+{
+    SW_RenderData *data;
+
+    SDL_assert(renderer != NULL);
+    data = (SW_RenderData *)renderer->driverdata;
+    data->present = present;
+    data->destroy = destroy;
+    data->set_vsync = set_vsync;
+    data->callback_userdata = userdata;
+    renderer->SetVSync = SW_SetVSync;
 }
 
 SDL_Renderer *SW_CreateRendererForSurface(SDL_Surface *surface)

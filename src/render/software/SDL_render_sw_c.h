@@ -24,6 +24,17 @@
 
 extern SDL_Renderer *SW_CreateRendererForSurface(SDL_Surface *surface);
 
+typedef int (*SW_RenderPresentCallback)(SDL_Renderer *renderer, void *userdata);
+typedef void (*SW_DestroyRendererCallback)(SDL_Renderer *renderer, void *userdata);
+typedef int (*SW_SetVSyncCallback)(SDL_Renderer *renderer, int vsync,
+                                   void *userdata);
+
+extern void SW_SetRendererCallbacks(SDL_Renderer *renderer,
+                                    SW_RenderPresentCallback present,
+                                    SW_DestroyRendererCallback destroy,
+                                    SW_SetVSyncCallback set_vsync,
+                                    void *userdata);
+
 #endif /* SDL_render_sw_c_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */

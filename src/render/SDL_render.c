@@ -124,6 +124,9 @@ static const SDL_RenderDriver *render_drivers[] = {
 #if SDL_VIDEO_RENDER_VITA_GXM
     &VITA_GXM_RenderDriver,
 #endif
+#ifdef SDL_VIDEO_RENDER_PS5AGC
+    &PS5AGC_RenderDriver,
+#endif
 #if SDL_VIDEO_RENDER_SW
     &SW_RenderDriver
 #endif
@@ -998,6 +1001,11 @@ SDL_Renderer *SDL_CreateRenderer(SDL_Window *window, int index, Uint32 flags)
                     break;
                 }
             }
+#ifdef SDL_VIDEO_RENDER_PS5AGC
+            if (!renderer && SDL_strcasecmp(hint, "ps5agc") == 0) {
+                goto error;
+            }
+#endif
         }
 
         if (!renderer) {
@@ -1011,6 +1019,12 @@ SDL_Renderer *SDL_CreateRenderer(SDL_Window *window, int index, Uint32 flags)
                         /* Yay, we got one! */
                         break;
                     }
+#ifdef SDL_VIDEO_RENDER_PS5AGC
+                    if ((flags & SDL_RENDERER_ACCELERATED) &&
+                        SDL_strcmp(driver->info.name, "ps5agc") == 0) {
+                        goto error;
+                    }
+#endif
                 }
             }
         }
