@@ -130,6 +130,14 @@ generated headers directly and do not invoke a shader compiler. In addition
 to the packed ABGR8888 shader, the tree contains planar and interleaved YUV
 variants for JPEG, BT.601, and BT.709 conversion.
 
+Linear texture storage uses 256-byte GPU row pitches for ABGR8888, R8, and
+RG8 planes while SDL lock buffers retain their tight application-facing
+pitches. This is required for gfx1013 linear-image fetches, including odd
+widths; allocating only the tight row size can make a texture fetch cross the
+mapped allocation and fault the GPU. `testyuv` accepts `--hardware` to select
+its native-YUV page, `--frames N` for a bounded hardware run, and `--bare` to
+omit the clear and text overlay when isolating a texture draw.
+
 The Prospero build and link validation covers SDL itself plus `testgeometry`,
 `testrendercopyex`, and `testrendertarget`. On firmware 5.50 hardware,
 `testgeometry` has also validated native 1920x1080 OpenAGC initialization,
@@ -141,7 +149,9 @@ the SDK's `libSceAgcDriver` import stub, generated locally from a legally
 obtained firmware SPRX; the firmware binary is not distributed by SDL or
 OpenAGC. The YUV shaders and texture paths cross-build with the current
 OpenAGC/openagc-psbc revisions; their visual matrix/plane-order validation is
-still required on hardware accepted by OpenAGC.
+still required on hardware accepted by OpenAGC. A bounded 555x333 YV12/JPEG
+run on firmware 5.50 now returns without a GPU protection fault or a stale
+process; color/readback validation remains outstanding.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and

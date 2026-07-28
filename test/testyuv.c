@@ -256,6 +256,8 @@ int main(int argc, char **argv)
     Uint32 rgb_format = SDL_PIXELFORMAT_RGBX8888;
     Uint32 yuv_format = SDL_PIXELFORMAT_YV12;
     int current = 0;
+    int max_frames = 0;
+    SDL_bool bare_frame = SDL_FALSE;
     int pitch;
     Uint8 *raw_yuv;
     Uint32 then, now, i, iterations = 100;
@@ -300,8 +302,18 @@ int main(int argc, char **argv)
             rgb_format = SDL_PIXELFORMAT_BGRA8888;
         } else if (SDL_strcmp(argv[arg], "--automated") == 0) {
             should_run_automated_tests = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--hardware") == 0) {
+            current = 2;
+        } else if (SDL_strcmp(argv[arg], "--bare") == 0) {
+            bare_frame = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--frames") == 0) {
+            if (!argv[arg + 1] || SDL_atoi(argv[arg + 1]) <= 0) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "--frames requires a positive frame count\n");
+                return 1;
+            }
+            max_frames = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare] [--frames count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
@@ -398,6 +410,7 @@ int main(int argc, char **argv)
 
     {
         int done = 0;
+        int frames = 0;
         while (!done) {
             SDL_Event event;
             while (SDL_PollEvent(&event) > 0) {
@@ -430,16 +443,36 @@ int main(int argc, char **argv)
                 current -= SDL_arraysize(output);
             }
 
-            SDL_RenderClear(renderer);
+            if (!bare_frame) {
+                SDL_RenderClear(renderer);
+            }
             SDL_RenderCopy(renderer, output[current], NULL, NULL);
-            SDL_SetRenderDrawColor(renderer, 0xFF, 0xFF, 0xFF, 0xFF);
-            if (current == 0) {
-                SDLTest_DrawString(renderer, 4, 4, titles[current]);
-            } else {
-                (void)SDL_snprintf(title, sizeof(title), "%s %s %s", titles[current], yuv_name, yuv_mode);
-                SDLTest_DrawString(renderer, 4, 4, title);
+            if (!bare_frame) {
+                SDL_SetRenderDrawColor(renderer, 0xFF, 0xFF, 0xFF, 0xFF);
+                if (current == 0) {
+                    SDLTest_DrawString(renderer, 4, 4, titles[current]);
+                } else {
+                    (void)SDL_snprintf(title, sizeof(title), "%s %s %s", titles[current], yuv_name, yuv_mode);
+                    SDLTest_DrawString(renderer, 4, 4, title);
+                }
+            }
+            if (max_frames > 0 && frames == 0) {
+                const SDL_Rect probe_rect = { original->w / 2, original->h / 2, 1, 1 };
+                Uint32 probe = 0;
+                if (SDL_RenderReadPixels(renderer, &probe_rect,
+                                         SDL_PIXELFORMAT_ABGR8888,
+                                         &probe, sizeof(probe)) == 0) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "GPU center pixel: 0x%08" SDL_PRIx32 "\n", probe);
+                } else {
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                 "GPU center readback failed: %s\n", SDL_GetError());
+                }
             }
             SDL_RenderPresent(renderer);
+            if (max_frames > 0 && ++frames >= max_frames) {
+                done = 1;
+            }
             SDL_Delay(10);
         }
     }

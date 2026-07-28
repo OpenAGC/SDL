@@ -443,7 +443,7 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     data->format = texture->format;
     data->scale_mode = texture->scaleMode;
     if (texture->format == SDL_PIXELFORMAT_ABGR8888) {
-        data->pitch = texture->w * 4;
+        data->pitch = (int)PS5AGC_Align((size_t)texture->w * 4u, 256u);
         data->plane_pitch[0] = data->pitch;
         data->plane_count = 1u;
         data->pixel_bytes = (size_t)data->pitch * texture->h;
@@ -451,22 +451,26 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
         chroma_width = (texture->w + 1) / 2;
         chroma_height = (texture->h + 1) / 2;
         data->pitch = texture->w;
-        data->plane_pitch[0] = texture->w;
-        y_bytes = (size_t)texture->w * texture->h;
+        data->plane_pitch[0] = (int)PS5AGC_Align((size_t)texture->w, 256u);
+        y_bytes = (size_t)data->plane_pitch[0] * texture->h;
         if (texture->format == SDL_PIXELFORMAT_NV12 ||
             texture->format == SDL_PIXELFORMAT_NV21) {
             data->plane_count = 2u;
-            data->plane_pitch[1] = chroma_width * 2;
+            data->plane_pitch[1] = (int)PS5AGC_Align(
+                (size_t)chroma_width * 2u, 256u);
             data->plane_offset[1] = PS5AGC_Align(y_bytes, 256u);
             chroma_bytes = (size_t)data->plane_pitch[1] * chroma_height;
-            data->lock_bytes = y_bytes + chroma_bytes;
+            data->lock_bytes = (size_t)texture->w * texture->h +
+                (size_t)chroma_width * 2u * chroma_height;
             data->pixel_bytes = data->plane_offset[1] + chroma_bytes;
         } else {
             data->plane_count = 3u;
-            data->plane_pitch[1] = chroma_width;
-            data->plane_pitch[2] = chroma_width;
-            chroma_bytes = (size_t)chroma_width * chroma_height;
-            data->lock_bytes = y_bytes + chroma_bytes * 2u;
+            data->plane_pitch[1] = (int)PS5AGC_Align(
+                (size_t)chroma_width, 256u);
+            data->plane_pitch[2] = data->plane_pitch[1];
+            chroma_bytes = (size_t)data->plane_pitch[1] * chroma_height;
+            data->lock_bytes = (size_t)texture->w * texture->h +
+                (size_t)chroma_width * chroma_height * 2u;
             if (texture->format == SDL_PIXELFORMAT_IYUV) {
                 data->plane_offset[1] = PS5AGC_Align(y_bytes, 256u);
                 data->plane_offset[2] = PS5AGC_Align(
