@@ -20,9 +20,11 @@ only authority for firmware, ABI, hardware, mode, and compatibility policy.
   `agcVideoOutGetDefaultMode`; SDL does not contain firmware or hardware
   qualification tables.
 - Keep the existing CPU tiled presenter only in the software framebuffer path.
-- Use three flexible render targets and caller-owned direct VideoOut buffers.
-  Each frame records transitions and an `agcGfx1013CopyBuffer`, signals a
-  bounded fence, and presents with `agcVideoOutPresent`.
+- Use three caller-owned direct VideoOut buffers as the screen render targets.
+  Native draws write the current scanout buffer directly, then transition it
+  for presentation, signal a bounded EOP fence, and call
+  `agcVideoOutPresent`. The accelerated path has no full-frame CPU rasterizer
+  and no full-frame presentation copy.
 - Check generated PSBC shader blobs into the SDL source tree so consuming SDK
   and application builds do not need a shader compiler.
 
@@ -109,13 +111,25 @@ The repository helper accepts the same choice through the
 `SDL_PS5_OPENAGC` environment variable. Its default is `OFF`, preserving
 generic SDK builds.
 
-The integrated milestone provides exclusive lazy VideoOut ownership, clean
-fallback/error selection, OpenAGC mode discovery, three direct scanout
-buffers, per-slot bounded fences, GPU buffer-copy submission, readback,
-render targets, geometry/copy/copy-ex, scaling, clipping, blending, streaming
-locks, and SDL's YUV conversion coverage. Command rasterization currently uses
-SDL's common surface renderer into OpenAGC flexible memory; native AGC shader
-draw batching and native planar YUV shaders remain the next renderer milestone.
+The native renderer now consumes SDL's common geometry expansion for fills,
+copies, rotated copies, and indexed geometry, packs position/UV/color vertices,
+and submits them with `agcGfx1013DrawBaselineIndexAuto`. Clears and points are
+also expanded to triangles. Viewports and clip rectangles become OpenAGC
+scissors, SDL blend modes become OpenAGC color-target blend state, render-target
+textures use flexible GPU-visible memory, and texture locks or updates publish
+only texture data. Readback invalidates and converts only the requested
+rectangle after a bounded GPU-to-host transition.
+
+The checked-in Wave32 PSBC shaders are built from
+`src/render/ps5agc/shaders/ps5agc.vert` and `ps5agc.frag`. Application and SDK
+builds consume their generated headers directly and do not invoke a shader
+compiler. Native planar YUV formats and their JPEG/BT.601/BT.709 shader variants
+remain a later renderer increment; SDL currently converts those formats to the
+advertised ABGR8888 texture format.
+
+The Prospero compile validation covers SDL itself plus `testgeometry`,
+`testrendercopyex`, and `testrendertarget`. Running and visually validating
+those programs still requires hardware accepted by OpenAGC.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and
