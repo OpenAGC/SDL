@@ -262,6 +262,7 @@ int main(int argc, char **argv)
     SDL_bool display_probe = SDL_FALSE;
     SDL_bool target_probe = SDL_FALSE;
     SDL_bool probe_failed = SDL_FALSE;
+    Uint32 renderer_flags = 0;
     const char *requested_renderer = NULL;
     int pitch;
     Uint8 *raw_yuv;
@@ -328,6 +329,8 @@ int main(int argc, char **argv)
                 return 1;
             }
             requested_renderer = argv[++arg];
+        } else if (SDL_strcmp(argv[arg], "--accelerated") == 0) {
+            renderer_flags |= SDL_RENDERER_ACCELERATED;
         } else if (SDL_strcmp(argv[arg], "--frames") == 0) {
             if (!argv[arg + 1] || SDL_atoi(argv[arg + 1]) <= 0) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "--frames requires a positive frame count\n");
@@ -335,7 +338,7 @@ int main(int argc, char **argv)
             }
             max_frames = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe] [--renderer name] [--frames count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe] [--renderer name] [--accelerated] [--frames count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
@@ -404,7 +407,7 @@ int main(int argc, char **argv)
                      "Couldn't request renderer %s\n", requested_renderer);
         return 4;
     }
-    renderer = SDL_CreateRenderer(window, -1, 0);
+    renderer = SDL_CreateRenderer(window, -1, renderer_flags);
     if (!renderer) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create renderer: %s\n", SDL_GetError());
         return 4;

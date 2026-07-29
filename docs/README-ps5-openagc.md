@@ -190,10 +190,17 @@ reset, or stale process.
 WebSrv launch. It uses ps5debug-NG to remove and reject stale
 `eboot.bin` processes, uploads the required BMP beside the ELF, requires the
 exact readback oracle, rejects PID-scoped fatal events and GPU resets, verifies
-the SystemService self-exit sequence, and confirms WebSrv remains reachable.
+the SystemService self-exit sequence, rejects reboot or shutdown sequences, and
+confirms WebSrv remains reachable.
 Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it. Set
 `SDL_PS5AGC_PROBE_FRAMES` to a positive value for triple-buffer stress; the
-default remains one frame.
+default remains one frame. `SDL_PS5AGC_PROBE_RENDERER=auto` omits the renderer
+hint so default selection can be checked, with `SDL_PS5AGC_EXPECT_RENDERER`
+naming the expected result. `SDL_PS5AGC_PROBE_ACCELERATED=1` requests the
+accelerated capability without naming a driver. Expected creation failures can
+be qualified without weakening lifecycle checks by setting
+`SDL_PS5AGC_EXPECT_FAILURE=1` and the required fixed-string
+`SDL_PS5AGC_EXPECT_ERROR` oracle.
 The firmware 5.50 qualification completed through `KillApp()` followed by
 `All processes exited`, with no app crash, fatal signal, GFX reset, or stale
 native-game process. PS5 executables use SDL2main's non-returning SystemService

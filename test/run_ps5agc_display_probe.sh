@@ -11,11 +11,23 @@ bmp=${SDL_PS5AGC_PROBE_BMP:-$build_dir/test/testyuv.bmp}
 websrv_timeout=${SDL_PS5AGC_WEBSRV_TIMEOUT:-30}
 probe_frames=${SDL_PS5AGC_PROBE_FRAMES:-1}
 probe_renderer=${SDL_PS5AGC_PROBE_RENDERER:-ps5agc}
+expected_renderer=${SDL_PS5AGC_EXPECT_RENDERER:-}
+probe_accelerated=${SDL_PS5AGC_PROBE_ACCELERATED:-0}
+expect_failure=${SDL_PS5AGC_EXPECT_FAILURE:-0}
+expected_error=${SDL_PS5AGC_EXPECT_ERROR:-}
 klog_port=${SDL_PS5AGC_KLOG_PORT:-3232}
 pyps4debug_dir=${PYPS4DEBUG_DIR:-/Users/bizkut/Downloads/PS5/homebrew/PyPS4debug}
 killer=${PS5DEBUG_KILLER:-$repo_dir/../Vulkan-PS5/examples/ps5debug_kill_process.py}
 log_dir=${SDL_PS5AGC_LOG_DIR:-${TMPDIR:-/tmp}/sdl-ps5agc-qualification}
 remote_dir=/data/homebrew/sdl_ps5agc_display_probe
+
+if [ -z "$expected_renderer" ]; then
+    if [ "$probe_renderer" = auto ]; then
+        expected_renderer=ps5agc
+    else
+        expected_renderer=$probe_renderer
+    fi
+fi
 
 case "$websrv_timeout" in
     ''|*[!0-9]*|0)
@@ -30,11 +42,36 @@ case "$probe_frames" in
         ;;
 esac
 case "$probe_renderer" in
+    auto) ;;
     ''|*[!A-Za-z0-9_-]*)
-        echo "SDL_PS5AGC_PROBE_RENDERER must be a renderer driver name" >&2
+        echo "SDL_PS5AGC_PROBE_RENDERER must be 'auto' or a renderer driver name" >&2
         exit 2
         ;;
 esac
+case "$expected_renderer" in
+    ''|*[!A-Za-z0-9_-]*)
+        echo "SDL_PS5AGC_EXPECT_RENDERER must be a renderer driver name" >&2
+        exit 2
+        ;;
+esac
+case "$probe_accelerated" in
+    0|1) ;;
+    *)
+        echo "SDL_PS5AGC_PROBE_ACCELERATED must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+case "$expect_failure" in
+    0|1) ;;
+    *)
+        echo "SDL_PS5AGC_EXPECT_FAILURE must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+if [ "$expect_failure" -eq 1 ] && [ -z "$expected_error" ]; then
+    echo "SDL_PS5AGC_EXPECT_ERROR is required for an expected failure" >&2
+    exit 2
+fi
 if [ ! -f "$elf" ] || [ ! -f "$bmp" ]; then
     echo "missing testyuv ELF or BMP under $build_dir/test" >&2
     exit 2
@@ -91,13 +128,20 @@ klog=$log_dir/${timestamp}-display-probe.klog
 target_klog=$log_dir/${timestamp}-display-probe-target.klog
 
 launch_status=0
+launch_args="--display-probe --frames ${probe_frames} ${remote_dir}/testyuv.bmp"
+if [ "$probe_renderer" != auto ]; then
+    launch_args="--display-probe --renderer ${probe_renderer} --frames ${probe_frames} ${remote_dir}/testyuv.bmp"
+fi
+if [ "$probe_accelerated" -eq 1 ]; then
+    launch_args="--accelerated ${launch_args}"
+fi
 curl -sS --connect-timeout 3 --max-time "$websrv_timeout" --get \
     "http://${PS5_HOST}:8080/hbldr" \
     --data-urlencode pipe=1 \
     --data-urlencode daemon=0 \
     --data-urlencode "path=${remote_dir}/eboot.elf" \
     --data-urlencode "cwd=$remote_dir" \
-    --data-urlencode "args=--display-probe --renderer ${probe_renderer} --frames ${probe_frames} ${remote_dir}/testyuv.bmp" \
+    --data-urlencode "args=${launch_args}" \
     >"$log" 2>&1 || launch_status=$?
 
 sleep 2
@@ -113,12 +157,21 @@ if [ "$launch_status" -ne 0 ]; then
     exit 1
 fi
 sed -n '1,160p' "$log"
-if ! grep -F "Renderer selected: ${probe_renderer}" "$log" >/dev/null ||
-   ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
-   grep -E 'VideoOut readback mismatch|GPU center readback failed' "$log" >/dev/null; then
-    kill_eboot || true
-    echo "display probe did not produce the exact readback oracle; log: $log" >&2
-    exit 1
+if [ "$expect_failure" -eq 1 ]; then
+    if ! grep -F -- "$expected_error" "$log" >/dev/null ||
+       grep -F 'GPU center pixel:' "$log" >/dev/null; then
+        kill_eboot || true
+        echo "display probe did not produce the expected failure; log: $log" >&2
+        exit 1
+    fi
+else
+    if ! grep -F "Renderer selected: ${expected_renderer}" "$log" >/dev/null ||
+       ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
+       grep -E 'VideoOut readback mismatch|GPU center readback failed' "$log" >/dev/null; then
+        kill_eboot || true
+        echo "display probe did not produce the expected renderer and readback oracle; log: $log" >&2
+        exit 1
+    fi
 fi
 if [ ! -s "$klog" ]; then
     echo "display probe passed but klog capture failed: $klog" >&2
@@ -138,9 +191,11 @@ if grep -Eq \
     "# proc ID: *${target_pid}$|mDBG: Sending signal\(pid: *${target_pid},|App Crash : PID=0x0*${target_pid_hex}([^0-9a-f]|$)|SYSTEM_XO_VIOLATION" \
     "$target_klog" ||
    grep -Eq '=== Reset GFX queue|#### GPU reset sequence starts' \
+    "$target_klog" ||
+   grep -Eq 'PowerManager\.RequestStateChange state:(Reboot|Shutdown)|Start SystemReboot|Start SystemShutdown' \
     "$target_klog"; then
     kill_eboot || true
-    echo "display probe hit a fatal or GPU-reset event: $target_klog" >&2
+    echo "display probe hit a fatal, GPU-reset, or system power event: $target_klog" >&2
     exit 1
 fi
 self_kill_line=$(grep -n 'KillApp() appId=' "$target_klog" |
@@ -167,6 +222,10 @@ if ! curl -sS --connect-timeout 3 --max-time 5 \
     exit 1
 fi
 
-echo "ps5agc display probe: PASS renderer=$probe_renderer pixel=0xff0000ff frames=$probe_frames pid=$target_pid"
+if [ "$expect_failure" -eq 1 ]; then
+    echo "ps5agc display probe: PASS expected-failure renderer=$probe_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
+else
+    echo "ps5agc display probe: PASS requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated pixel=0xff0000ff frames=$probe_frames pid=$target_pid"
+fi
 echo "log: $log"
 echo "klog: $target_klog"
