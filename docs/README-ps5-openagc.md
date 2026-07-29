@@ -20,11 +20,11 @@ only authority for firmware, ABI, hardware, mode, and compatibility policy.
   `agcVideoOutGetDefaultMode`; SDL does not contain firmware or hardware
   qualification tables.
 - Keep the existing CPU tiled presenter only in the software framebuffer path.
-- Use three caller-owned direct VideoOut buffers as the screen render targets.
-  Native draws write the current scanout buffer directly, then transition it
-  for presentation, signal a bounded EOP fence, and call
-  `agcVideoOutPresent`. The accelerated path has no full-frame CPU rasterizer
-  and no full-frame presentation copy.
+- Use three flexible-memory render targets and three caller-owned direct
+  VideoOut buffers. Native draws write the current render target, then a
+  transitioned `agcGfx1013CopyBuffer` transfer populates the matching scanout
+  buffer before a bounded EOP fence and `agcVideoOutPresent`. The accelerated
+  path has no full-frame CPU rasterizer or full-frame CPU presentation copy.
 - Check generated PSBC shader blobs into the SDL source tree so consuming SDK
   and application builds do not need a shader compiler.
 
@@ -100,7 +100,8 @@ FIFO/VSYNC only, disabling VSYNC fails instead of being emulated.
 
 ## Building the current integration
 
-OpenAGC remains opt-in. For a Prospero build, install a tagged OpenAGC package
+OpenAGC remains opt-in and this integration requires OpenAGC 0.2.0 or newer.
+For a Prospero build, install a tagged OpenAGC package
 into the SDK sysroot (or set `OpenAGC_DIR` to its config-package directory),
 then configure SDL with:
 
@@ -147,14 +148,21 @@ ABGR8888 render target.
 
 The scanout path keeps three flexible-memory GPU render surfaces separate from
 the three write-combined direct-memory buffers registered with VideoOut. Before
-a flip or display readback, SDL performs a bounded render-target-to-host
-transition, invalidates the completed flexible surface, copies it to the
-matching registered buffer, and publishes the direct-memory range. Display
-readback is then sourced from that actual registered buffer. This follows the
-hardware-qualified OpenAGC cube/graphics presentation model and avoids using a
-write-combined scanout allocation as a GPU render target. SDL deliberately does
-not use `agcGfx1013CopyBuffer` for scanout until OpenAGC qualifies that transfer
-across flexible and direct memory on hardware.
+a flip or display readback, SDL transitions the completed surface to copy
+source and the matching registered buffer to copy destination, records
+`agcGfx1013CopyBuffer`, transitions the destination for host readback, and
+waits on the bounded EOP fence. Display readback is sourced from that actual
+registered buffer. This avoids using a write-combined scanout allocation as a
+GPU render target while also avoiding a full-frame CPU copy.
+
+Renderer destruction calls the public `agcDriverShutdown` lifecycle boundary
+after releasing SDL-owned allocations. This is also done on partial renderer
+creation failure, before presentation ownership is returned to the software
+path. OpenAGC 0.2.0 pairs its system-flexible allocations with
+`sceKernelReleaseFlexibleMemory`; repeating an allocation-failure probe on
+firmware 5.50 reused the same addresses for all nine internal regions, showing
+that the failed launch no longer consumes additional quota. Flexible memory
+leaked by pre-0.2.0 processes remains allocated until the console is restarted.
 
 The Prospero build and link validation covers SDL itself plus `testgeometry`,
 `testrendercopyex`, and `testrendertarget`. On firmware 5.50 hardware,
@@ -173,14 +181,19 @@ conversion. These results validate render-target clear, packed texture color,
 native YUV color within expected rounding, and target readback. Direct
 VideoOut/display-surface readback was subsequently hardware-qualified with the
 same exact-color probe: firmware 5.50 returned `0xff0000ff` from the registered
-scanout buffer after the red clear.
+scanout buffer after the red clear. A subsequent 180-frame bounded run retained
+the exact oracle while cycling all three flexible render targets, GPU copies,
+direct VideoOut buffers, fences, and presentations without a fatal event, GPU
+reset, or stale process.
 
 `test/run_ps5agc_display_probe.sh` performs that qualification as a bounded
-one-frame WebSrv launch. It uses ps5debug-NG to remove and reject stale
+WebSrv launch. It uses ps5debug-NG to remove and reject stale
 `eboot.bin` processes, uploads the required BMP beside the ELF, requires the
 exact readback oracle, rejects PID-scoped fatal events and GPU resets, verifies
 the SystemService self-exit sequence, and confirms WebSrv remains reachable.
-Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it.
+Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it. Set
+`SDL_PS5AGC_PROBE_FRAMES` to a positive value for triple-buffer stress; the
+default remains one frame.
 The firmware 5.50 qualification completed through `KillApp()` followed by
 `All processes exited`, with no app crash, fatal signal, GFX reset, or stale
 native-game process. PS5 executables use SDL2main's non-returning SystemService

@@ -262,6 +262,7 @@ int main(int argc, char **argv)
     SDL_bool display_probe = SDL_FALSE;
     SDL_bool target_probe = SDL_FALSE;
     SDL_bool probe_failed = SDL_FALSE;
+    const char *requested_renderer = NULL;
     int pitch;
     Uint8 *raw_yuv;
     Uint32 then, now, i, iterations = 100;
@@ -321,6 +322,12 @@ int main(int argc, char **argv)
         } else if (SDL_strcmp(argv[arg], "--target-texture-probe") == 0) {
             bare_frame = SDL_TRUE;
             target_probe = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--renderer") == 0) {
+            if (!argv[arg + 1] || !*argv[arg + 1]) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "--renderer requires a driver name\n");
+                return 1;
+            }
+            requested_renderer = argv[++arg];
         } else if (SDL_strcmp(argv[arg], "--frames") == 0) {
             if (!argv[arg + 1] || SDL_atoi(argv[arg + 1]) <= 0) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "--frames requires a positive frame count\n");
@@ -328,7 +335,7 @@ int main(int argc, char **argv)
             }
             max_frames = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe] [--frames count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe] [--renderer name] [--frames count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
@@ -391,10 +398,34 @@ int main(int argc, char **argv)
         return 4;
     }
 
+    if (requested_renderer &&
+        !SDL_SetHint(SDL_HINT_RENDER_DRIVER, requested_renderer)) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Couldn't request renderer %s\n", requested_renderer);
+        return 4;
+    }
     renderer = SDL_CreateRenderer(window, -1, 0);
     if (!renderer) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create renderer: %s\n", SDL_GetError());
         return 4;
+    }
+    {
+        SDL_RendererInfo renderer_info;
+        if (SDL_GetRendererInfo(renderer, &renderer_info) < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "Couldn't query renderer: %s\n", SDL_GetError());
+            return 4;
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Renderer selected: %s flags=0x%08" SDL_PRIx32 "\n",
+                    renderer_info.name, renderer_info.flags);
+        if (requested_renderer &&
+            SDL_strcmp(renderer_info.name, requested_renderer) != 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "Renderer mismatch: requested %s, selected %s\n",
+                         requested_renderer, renderer_info.name);
+            return 4;
+        }
     }
     if (target_probe) {
         SDL_Texture *target;

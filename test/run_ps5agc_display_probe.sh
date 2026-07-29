@@ -9,6 +9,8 @@ build_dir=${SDL_PS5AGC_BUILD_DIR:-$repo_dir/build-ps5agc-native2}
 elf=${SDL_PS5AGC_PROBE_ELF:-$build_dir/test/testyuv}
 bmp=${SDL_PS5AGC_PROBE_BMP:-$build_dir/test/testyuv.bmp}
 websrv_timeout=${SDL_PS5AGC_WEBSRV_TIMEOUT:-30}
+probe_frames=${SDL_PS5AGC_PROBE_FRAMES:-1}
+probe_renderer=${SDL_PS5AGC_PROBE_RENDERER:-ps5agc}
 klog_port=${SDL_PS5AGC_KLOG_PORT:-3232}
 pyps4debug_dir=${PYPS4DEBUG_DIR:-/Users/bizkut/Downloads/PS5/homebrew/PyPS4debug}
 killer=${PS5DEBUG_KILLER:-$repo_dir/../Vulkan-PS5/examples/ps5debug_kill_process.py}
@@ -18,6 +20,18 @@ remote_dir=/data/homebrew/sdl_ps5agc_display_probe
 case "$websrv_timeout" in
     ''|*[!0-9]*|0)
         echo "SDL_PS5AGC_WEBSRV_TIMEOUT must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+case "$probe_frames" in
+    ''|*[!0-9]*|0)
+        echo "SDL_PS5AGC_PROBE_FRAMES must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+case "$probe_renderer" in
+    ''|*[!A-Za-z0-9_-]*)
+        echo "SDL_PS5AGC_PROBE_RENDERER must be a renderer driver name" >&2
         exit 2
         ;;
 esac
@@ -83,7 +97,7 @@ curl -sS --connect-timeout 3 --max-time "$websrv_timeout" --get \
     --data-urlencode daemon=0 \
     --data-urlencode "path=${remote_dir}/eboot.elf" \
     --data-urlencode "cwd=$remote_dir" \
-    --data-urlencode "args=--display-probe ${remote_dir}/testyuv.bmp" \
+    --data-urlencode "args=--display-probe --renderer ${probe_renderer} --frames ${probe_frames} ${remote_dir}/testyuv.bmp" \
     >"$log" 2>&1 || launch_status=$?
 
 sleep 2
@@ -99,7 +113,8 @@ if [ "$launch_status" -ne 0 ]; then
     exit 1
 fi
 sed -n '1,160p' "$log"
-if ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
+if ! grep -F "Renderer selected: ${probe_renderer}" "$log" >/dev/null ||
+   ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
    grep -E 'VideoOut readback mismatch|GPU center readback failed' "$log" >/dev/null; then
     kill_eboot || true
     echo "display probe did not produce the exact readback oracle; log: $log" >&2
@@ -152,6 +167,6 @@ if ! curl -sS --connect-timeout 3 --max-time 5 \
     exit 1
 fi
 
-echo "ps5agc display probe: PASS pixel=0xff0000ff pid=$target_pid"
+echo "ps5agc display probe: PASS renderer=$probe_renderer pixel=0xff0000ff frames=$probe_frames pid=$target_pid"
 echo "log: $log"
 echo "klog: $target_klog"
