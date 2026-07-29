@@ -68,9 +68,9 @@ case "$expected_renderer" in
         ;;
 esac
 case "$probe_kind" in
-    automation|blend|display|packed|yuv) ;;
+    automation|blend|display|packed|target|yuv) ;;
     *)
-        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, display, packed, or yuv" >&2
+        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, display, packed, target, or yuv" >&2
         exit 2
         ;;
 esac
@@ -209,6 +209,8 @@ if [ "$probe_kind" = automation ]; then
 elif [ "$probe_kind" = yuv ]; then
     probe_args="--yuv-update-probe --${yuv_format} --${yuv_mode}"
 elif [ "$probe_kind" = packed ]; then
+    probe_args=--packed-texture-probe
+elif [ "$probe_kind" = target ]; then
     probe_args=--target-texture-probe
 elif [ "$probe_kind" = blend ]; then
     probe_args=--blend-probe
@@ -314,6 +316,11 @@ else
            grep -E 'Packed texture probe mismatch|GPU center readback failed' "$log" >/dev/null; then
             oracle_failed=1
         fi
+    elif [ "$probe_kind" = target ]; then
+        if ! grep -F 'Target texture probe: PASS' "$log" >/dev/null ||
+           grep -E 'Target texture probe mismatch|GPU center readback failed' "$log" >/dev/null; then
+            oracle_failed=1
+        fi
     elif [ "$probe_kind" = blend ]; then
         if ! grep -F 'Zero-alpha blend probe: PASS' "$log" >/dev/null ||
            grep -E 'Zero-alpha blend probe mismatch|GPU center readback failed' "$log" >/dev/null; then
@@ -367,6 +374,8 @@ else
         echo "ps5agc display probe: PASS kind=yuv format=$yuv_format mode=$yuv_mode requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
     elif [ "$probe_kind" = packed ]; then
         echo "ps5agc display probe: PASS kind=packed requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
+    elif [ "$probe_kind" = target ]; then
+        echo "ps5agc display probe: PASS kind=target requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
     elif [ "$probe_kind" = blend ]; then
         echo "ps5agc display probe: PASS kind=blend requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
     else

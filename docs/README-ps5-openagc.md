@@ -157,8 +157,10 @@ native-YUV page, `--frames N` for a bounded hardware run, `--bare` to omit the
 clear and text overlay, `--display-probe` to require an exact opaque-red
 VideoOut readback, `--target-probe` to validate an untextured clear, and
 `--target-texture-probe` to validate texture sampling and readback through an
-ABGR8888 render target. `--blend-probe` verifies that a zero-alpha sampled draw
-preserves an opaque render target exactly.
+ABGR8888 render target. `--packed-texture-probe` performs the equivalent
+packed sampling check directly on the BGRA8 display surface. `--blend-probe`
+verifies that a zero-alpha sampled draw preserves an opaque magenta display
+surface exactly.
 
 The scanout path keeps three disjoint flexible-memory GPU render surfaces
 separate from the three write-combined direct-memory buffers registered with
@@ -245,12 +247,14 @@ and applies the same exact-process lifecycle checks as the display probe. Set
 `SDL_PS5AGC_AUTOMATION_FILTER` to one `render_test*` name to isolate a failing
 case.
 
-Two narrower `testyuv` gates separate packed sampling from blending without
-running the full Render suite. Set `SDL_PS5AGC_PROBE_KIND=packed` to draw one
-full-surface ABGR8888 texture with blending disabled and compare its center
-against a CPU conversion. Set `SDL_PS5AGC_PROBE_KIND=blend` to draw a
-zero-alpha ABGR8888 texture over an opaque magenta render target and require
-the target to remain exactly `0xffff00ff`. Both modes use the same bounded
+Three narrower `testyuv` gates separate display sampling, blending, and render
+targets without running the full Render suite. Set
+`SDL_PS5AGC_PROBE_KIND=packed` to draw one full-display ABGR8888 texture with
+blending disabled and compare its center against a CPU conversion. Set
+`SDL_PS5AGC_PROBE_KIND=blend` to draw a zero-alpha ABGR8888 texture over an
+opaque magenta display surface and require the destination to remain exactly
+`0xffff00ff`. Set `SDL_PS5AGC_PROBE_KIND=target` for the same packed sampling
+oracle through an ABGR8888 render target. All three modes use the same bounded
 fence, fatal-event, self-exit, stale-process, and WebSrv-health checks as the
 display probe.
 
