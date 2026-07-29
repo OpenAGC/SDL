@@ -440,3 +440,10 @@ dependencies. Their static link flags also include `openagc`, `kernel`, and
 `SceAgcDriver`. A Release OpenAGC-enabled install was validated by linking PS5
 PIE consumers through the installed CMake targets, `sdl2.pc`, and the
 relocatable `sdl2-config` script.
+
+The current local baseline also completes full Prospero test builds with
+OpenAGC enabled and disabled, passes all 17 host CTests, passes the 32-cycle
+software texture-churn control, and parses every guarded PS5 qualification
+runner with `sh -n`. These checks validate builds and test orchestration only;
+the guarded WebSrv renderer and stress matrices still require an explicitly
+available PS5.
