@@ -436,6 +436,11 @@ Resource-usage bookkeeping for a draw batch is transactional: target and
 sampled-texture usages are committed only after the batch reaches its bounded
 fence. If command recording fails before submission, the discarded batch
 cannot leave SDL claiming that an unexecuted transition changed GPU state.
+The same rule applies to texture cache publication, target/display readback,
+and the transition into presentation: SDL commits each new usage only after
+the corresponding flush or bounded GPU submission succeeds. A failed flush or
+submission therefore retains the last state known to have completed rather
+than recording work that never became visible to the GPU.
 The software fallback also gives its flip-event wait a one-second bound, so a
 missing VideoOut event becomes an SDL error instead of trapping an application
 indefinitely on a black screen. Because OpenAGC currently exposes FIFO/VSYNC

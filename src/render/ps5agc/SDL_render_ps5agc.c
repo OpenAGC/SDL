@@ -608,9 +608,12 @@ static void PS5AGC_CopyPlane(PS5AGC_TextureData *data, Uint32 plane,
 
 static int PS5AGC_FinishTextureUpdate(PS5AGC_TextureData *data)
 {
+    if (PS5AGC_Flush(&data->memory, 0, data->pixel_bytes,
+                     "publishing an OpenAGC texture update") < 0) {
+        return -1;
+    }
     data->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
-    return PS5AGC_Flush(&data->memory, 0, data->pixel_bytes,
-                        "publishing an OpenAGC texture update");
+    return 0;
 }
 
 static int PS5AGC_UpdateTextureYUV(SDL_Renderer *renderer, SDL_Texture *texture,
@@ -722,11 +725,12 @@ static void PS5AGC_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
         }
         return;
     }
-    data->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
     if (PS5AGC_Flush(&data->memory, 0, data->pixel_bytes,
                      "publishing a locked OpenAGC texture") < 0) {
         SDL_LogError(SDL_LOG_CATEGORY_RENDER, "%s", SDL_GetError());
+        return;
     }
+    data->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
 }
 
 static void PS5AGC_SetTextureScaleMode(SDL_Renderer *renderer,
@@ -1290,11 +1294,11 @@ static int PS5AGC_RenderReadPixels(SDL_Renderer *renderer,
                               AGC_GFX1013_RESOURCE_USAGE_HOST_READ) < 0) {
             return -1;
         }
-        texture->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
         if (PS5AGC_SubmitAndWait(data, index, &cb,
                                  "submitting an OpenAGC readback transition") < 0) {
             return -1;
         }
+        texture->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
     } else {
         agcCbInit(&cb, data->command_memory[index].cpu_address,
                   PS5AGC_COMMAND_BYTES);
@@ -1302,11 +1306,11 @@ static int PS5AGC_RenderReadPixels(SDL_Renderer *renderer,
                               AGC_GFX1013_RESOURCE_USAGE_HOST_READ) < 0) {
             return -1;
         }
-        data->render_usage[index] = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
         if (PS5AGC_SubmitAndWait(data, index, &cb,
                                  "submitting an OpenAGC screen readback transition") < 0) {
             return -1;
         }
+        data->render_usage[index] = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
     }
     error = agcGpuMemoryInvalidate(memory,
         display_offset + (size_t)rect->y * source_pitch,
@@ -1347,11 +1351,11 @@ static int PS5AGC_Present(SDL_Renderer *renderer)
                           AGC_GFX1013_RESOURCE_USAGE_PRESENT) < 0) {
         return -1;
     }
-    data->display_usage[index] = AGC_GFX1013_RESOURCE_USAGE_PRESENT;
     if (PS5AGC_SubmitAndWait(data, index, &cb,
                              "submitting OpenAGC presentation transition") < 0) {
         return -1;
     }
+    data->display_usage[index] = AGC_GFX1013_RESOURCE_USAGE_PRESENT;
     error = agcVideoOutPresent(data->video_out, index, data->frame_id,
                                PS5AGC_PRESENT_TIMEOUT_US);
     if (error != AGC_OK) {
