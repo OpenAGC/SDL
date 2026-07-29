@@ -254,6 +254,15 @@ return exact red from the display readback and present successfully. This is a
 bounded qualification of repeated driver shutdown/reinitialization and GPU
 allocation reuse; it is not run by default.
 
+`test/run_ps5agc_selection_matrix.sh` runs four isolated supported-hardware
+selection cases through the same guarded launcher: explicit `ps5agc`, automatic
+selection, an unnamed accelerated request, and explicit software. If
+`SDL_PS5AGC_DISABLED_ELF` names a separately built PS5 `testyuv` with
+`SDL_PS5_OPENAGC=OFF`, the matrix also requires automatic software selection
+and strict failure of an explicit `ps5agc` request. Those optional cases prove
+the backend-absent build contract; they do not replace qualification on
+hardware that OpenAGC itself rejects.
+
 `test/run_ps5agc_render_suite.sh` runs SDL's automated `Render` suite with the
 renderer explicitly pinned to `ps5agc`. The automation harness propagates its
 `--renderer` argument to suite-created renderers and logs their actual driver,
