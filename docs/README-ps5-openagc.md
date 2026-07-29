@@ -118,7 +118,8 @@ generic SDK builds.
 
 The native renderer now consumes SDL's common geometry expansion for fills,
 copies, rotated copies, and indexed geometry, packs position/UV/color vertices,
-and submits them with `agcGfx1013DrawBaselineIndexAuto`. Clears and points are
+builds sequential 32-bit indices in the upload arena, and submits them with
+`agcGfx1013DrawBaselineIndexed`. Clears and points are
 also expanded to triangles. A dedicated solid fragment shader handles clears
 and untextured primitives without binding a synthetic sampled texture. Viewports
 and clip rectangles become OpenAGC scissors, SDL blend modes become OpenAGC
@@ -133,6 +134,16 @@ generated headers directly and do not invoke a shader compiler. In addition
 to the packed ABGR8888 shader, the tree contains planar and interleaved YUV
 variants for JPEG, BT.601, and BT.709 conversion.
 
+Maintainers regenerate every blob with
+`src/render/ps5agc/shaders/regenerate.sh`. The script requires
+`glslangValidator`, `xxd`, and the sibling `openagc-psbc/psbc` executable. It
+compiles the vertex and pass-through geometry stages together as Wave32 NGG,
+then emits both `.sb` binaries and static C headers. Renderer initialization
+rejects code offsets at or beyond the blob end, code payloads shorter than 16
+bytes, and any fused Wave32 VS/PS state rejected by
+`agcGfx1013ValidateWave32VsPs`. These checks caught an older 348-byte NGG-back
+blob whose code offset was 344 and therefore contained only four code bytes.
+
 Linear texture storage uses 256-byte GPU row pitches for ABGR8888, R8, and
 RG8 planes while SDL lock buffers retain their tight application-facing
 pitches. This is required for gfx1013 linear-image fetches, including odd
@@ -146,9 +157,18 @@ VideoOut readback, `--target-probe` to validate an untextured clear, and
 `--target-texture-probe` to validate texture sampling and readback through an
 ABGR8888 render target.
 
-The scanout path keeps three flexible-memory GPU render surfaces separate from
-the three write-combined direct-memory buffers registered with VideoOut. Before
-a flip or display readback, SDL transitions the completed surface to copy
+The scanout path keeps three disjoint flexible-memory GPU render surfaces
+separate from the three write-combined direct-memory buffers registered with
+VideoOut. The shaders and three slot-local groups of render surface, command
+buffer, and fence are suballocated from one fixed 25 MiB flexible-memory
+mapping, with every render target starting on a 64 KiB boundary. Each slot has
+its own 256 KiB DCB and monotonically increasing fence value, so recording a
+later frame cannot overwrite an in-flight slot. The frequently rewritten
+4 MiB vertex/index upload arena uses public direct write-combined memory so its
+cache traffic stays outside the command/render mapping. This follows OpenAGC's
+hardware-qualified cube layout and avoids exhausting the FW 5.50 per-process
+system-flexible mapping capacity before the first 8,294,400-byte 1080p target.
+Before a flip or display readback, SDL transitions the completed surface to copy
 source and the matching registered buffer to copy destination, records
 `agcGfx1013CopyBuffer`, transitions the destination for host readback, and
 waits on the bounded EOP fence. Display readback is sourced from that actual
@@ -192,6 +212,9 @@ WebSrv launch. It uses ps5debug-NG to remove and reject stale
 exact readback oracle, rejects PID-scoped fatal events and GPU resets, verifies
 the SystemService self-exit sequence, rejects reboot or shutdown sequences, and
 confirms WebSrv remains reachable.
+Fatal/reset and power-event checks run before any pixel or test-result oracle,
+so a test can never be reported as an ordinary color mismatch after its GPU
+submission has already destabilized the shell.
 Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it. Set
 `SDL_PS5AGC_PROBE_FRAMES` to a positive value for triple-buffer stress; the
 default remains one frame. `SDL_PS5AGC_PROBE_RENDERER=auto` omits the renderer
@@ -210,6 +233,29 @@ all four enabled render tests to pass, rejects fatal, reset, and power events,
 and applies the same exact-process lifecycle checks as the display probe. Set
 `SDL_PS5AGC_AUTOMATION_FILTER` to one `render_test*` name to isolate a failing
 case.
+
+### Current hardware status
+
+The renderer is still experimental and must not yet be used as the default in
+shipping applications. On 2026-07-29, the current SDL/OpenAGC/openagc-psbc
+worktrees repeatedly failed the first accelerated clear in the isolated
+`render_testPrimitives` run on firmware 5.50. The target-only kernel log reports
+PFP bad opcode `0xc0001700`, a CPG write to unmapped GPU VA
+`0x0000c00000000000`, a stuck graphics queue, and a subsequent GFX reset. A
+one-frame standalone OpenAGC cube built against the same installed
+`libopenagc.a` completed its fence and exited without that fault, localizing the
+remaining defect to SDL's first recorded draw/state sequence rather than
+OpenAGC initialization or the console generally.
+
+The same failure persisted after individually matching the cube's VideoOut
+initialization order, opaque blend omission, BGRA8 UNORM target format, and
+initial HOST_READ-to-render-target acquire. All shader states pass OpenAGC's
+public validator, and the submitted SDL DCB does not itself contain
+`0xc0001700`; do not describe any of those eliminated differences as the root
+cause. The guarded runner removes the target process and fails immediately on
+this signature, but that containment is not a renderer fix. Hardware
+qualification remains blocked on identifying the command-stream overrun or
+state packet that makes the command processor fetch the bad opcode.
 
 ### Recovering a stale WebSrv application
 

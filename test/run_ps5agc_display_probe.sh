@@ -219,6 +219,34 @@ if [ "$launch_status" -ne 0 ]; then
     echo "display probe launch failed with curl status $launch_status; log: $log" >&2
     exit 1
 fi
+if [ ! -s "$klog" ]; then
+    remove_eboot
+    echo "display probe completed but klog capture failed: $klog" >&2
+    exit 1
+fi
+
+target_pid=$(latest_eboot_pid "$klog")
+if [ -z "$target_pid" ]; then
+    remove_eboot
+    echo "klog did not identify the display probe PID: $klog" >&2
+    exit 1
+fi
+target_exec_line=$(grep -n "^<${target_pid}> EXEC /app0/eboot\.bin " "$klog" |
+    tail -n 1 | cut -d: -f1)
+sed -n "${target_exec_line},\$p" "$klog" >"$target_klog"
+target_pid_hex=$(printf '%x' "$target_pid")
+if grep -Eq \
+    "# proc ID: *${target_pid}$|mDBG: Sending signal\(pid: *${target_pid},|App Crash : PID=0x0*${target_pid_hex}([^0-9a-f]|$)|SYSTEM_XO_VIOLATION" \
+    "$target_klog" ||
+   grep -Eq '=== Reset GFX queue|#### GPU reset sequence starts' \
+    "$target_klog" ||
+   grep -Eq 'PowerManager\.RequestStateChange state:(Reboot|Shutdown)|Start SystemReboot|Start SystemShutdown' \
+    "$target_klog"; then
+    remove_eboot
+    echo "display probe hit a fatal, GPU-reset, or system power event: $target_klog" >&2
+    exit 1
+fi
+
 sed -n '1,160p' "$log"
 if [ "$expect_failure" -eq 1 ]; then
     if ! grep -F -- "$expected_error" "$log" >/dev/null ||
@@ -263,33 +291,6 @@ else
         echo "display probe did not produce the expected renderer and readback oracle; log: $log" >&2
         exit 1
     fi
-fi
-if [ ! -s "$klog" ]; then
-    remove_eboot
-    echo "display probe passed but klog capture failed: $klog" >&2
-    exit 1
-fi
-
-target_pid=$(latest_eboot_pid "$klog")
-if [ -z "$target_pid" ]; then
-    remove_eboot
-    echo "klog did not identify the display probe PID: $klog" >&2
-    exit 1
-fi
-target_exec_line=$(grep -n "^<${target_pid}> EXEC /app0/eboot\.bin " "$klog" |
-    tail -n 1 | cut -d: -f1)
-sed -n "${target_exec_line},\$p" "$klog" >"$target_klog"
-target_pid_hex=$(printf '%x' "$target_pid")
-if grep -Eq \
-    "# proc ID: *${target_pid}$|mDBG: Sending signal\(pid: *${target_pid},|App Crash : PID=0x0*${target_pid_hex}([^0-9a-f]|$)|SYSTEM_XO_VIOLATION" \
-    "$target_klog" ||
-   grep -Eq '=== Reset GFX queue|#### GPU reset sequence starts' \
-    "$target_klog" ||
-   grep -Eq 'PowerManager\.RequestStateChange state:(Reboot|Shutdown)|Start SystemReboot|Start SystemShutdown' \
-    "$target_klog"; then
-    remove_eboot
-    echo "display probe hit a fatal, GPU-reset, or system power event: $target_klog" >&2
-    exit 1
 fi
 self_kill_line=$(grep -n 'KillApp() appId=' "$target_klog" |
     tail -n 1 | cut -d: -f1 || true)
