@@ -325,6 +325,71 @@ static SDL_bool PixelsWithinTolerance(Uint32 actual, Uint32 expected, Uint8 tole
     return SDL_TRUE;
 }
 
+static int ValidateRenderer(SDL_Renderer *renderer, const char *requested_renderer)
+{
+    SDL_RendererInfo renderer_info;
+
+    if (SDL_GetRendererInfo(renderer, &renderer_info) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Couldn't query renderer: %s\n", SDL_GetError());
+        return -1;
+    }
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Renderer selected: %s flags=0x%08" SDL_PRIx32 "\n",
+                renderer_info.name, renderer_info.flags);
+    if (requested_renderer &&
+        SDL_strcmp(renderer_info.name, requested_renderer) != 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Renderer mismatch: requested %s, selected %s\n",
+                     requested_renderer, renderer_info.name);
+        return -1;
+    }
+    if (SDL_strcmp(renderer_info.name, "ps5agc") == 0) {
+        char vsync_error[256];
+
+        SDL_ClearError();
+        if (SDL_RenderSetVSync(renderer, 1) < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5agc rejected FIFO/VSYNC mode: %s\n",
+                         SDL_GetError());
+            return -1;
+        }
+        if (SDL_GetRendererInfo(renderer, &renderer_info) < 0 ||
+            !(renderer_info.flags & SDL_RENDERER_PRESENTVSYNC)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5agc lost its FIFO/VSYNC renderer state: %s\n",
+                         SDL_GetError());
+            return -1;
+        }
+
+        SDL_ClearError();
+        if (SDL_RenderSetVSync(renderer, 0) == 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5agc accepted unsupported no-VSYNC mode\n");
+            return -1;
+        }
+        SDL_strlcpy(vsync_error, SDL_GetError(), sizeof(vsync_error));
+        if (SDL_strstr(vsync_error, "FIFO/VSYNC") == NULL) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5agc returned the wrong no-VSYNC error: %s\n",
+                         vsync_error);
+            return -1;
+        }
+        if (SDL_GetRendererInfo(renderer, &renderer_info) < 0 ||
+            !(renderer_info.flags & SDL_RENDERER_PRESENTVSYNC)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5agc no-VSYNC rejection changed renderer state: %s\n",
+                         SDL_GetError());
+            return -1;
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "ps5agc no-VSYNC rejection: PASS (%s; state preserved)\n",
+                    vsync_error);
+        SDL_ClearError();
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     struct
@@ -382,6 +447,7 @@ int main(int argc, char **argv)
     SDL_bool probe_failed = SDL_FALSE;
     Uint32 renderer_flags = 0;
     const char *requested_renderer = NULL;
+    int recreate_count = 0;
     int pitch;
     Uint8 *raw_yuv;
     Uint32 then, now, i, iterations = 100;
@@ -470,11 +536,22 @@ int main(int argc, char **argv)
                 return 1;
             }
             max_frames = SDL_atoi(argv[++arg]);
+        } else if (SDL_strcmp(argv[arg], "--recreate") == 0) {
+            if (!argv[arg + 1] || SDL_atoi(argv[arg + 1]) <= 0) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "--recreate requires a positive count\n");
+                return 1;
+            }
+            recreate_count = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe|--packed-texture-probe|--blend-probe|--yuv-update-probe] [--renderer name] [--accelerated] [--frames count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe|--packed-texture-probe|--blend-probe|--yuv-update-probe] [--renderer name] [--accelerated] [--frames count] [--recreate count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
+    }
+    if (recreate_count > 0 && !display_probe) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "--recreate requires --display-probe\n");
+        return 1;
     }
     if ((display_probe || target_texture_probe || packed_texture_probe || blend_probe ||
          yuv_update_probe) && max_frames == 0) {
@@ -546,37 +623,33 @@ int main(int argc, char **argv)
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create renderer: %s\n", SDL_GetError());
         return 4;
     }
-    {
-        SDL_RendererInfo renderer_info;
-        if (SDL_GetRendererInfo(renderer, &renderer_info) < 0) {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                         "Couldn't query renderer: %s\n", SDL_GetError());
-            return 4;
-        }
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Renderer selected: %s flags=0x%08" SDL_PRIx32 "\n",
-                    renderer_info.name, renderer_info.flags);
-        if (requested_renderer &&
-            SDL_strcmp(renderer_info.name, requested_renderer) != 0) {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                         "Renderer mismatch: requested %s, selected %s\n",
-                         requested_renderer, renderer_info.name);
-            return 4;
-        }
-        if (SDL_strcmp(renderer_info.name, "ps5agc") == 0) {
-            SDL_ClearError();
-            if (SDL_RenderSetVSync(renderer, 0) == 0 ||
-                SDL_strstr(SDL_GetError(), "FIFO/VSYNC") == NULL) {
+    if (ValidateRenderer(renderer, requested_renderer) < 0) {
+        return 4;
+    }
+    if (recreate_count > 0) {
+        int recreation;
+
+        for (recreation = 1; recreation <= recreate_count; ++recreation) {
+            SDL_DestroyRenderer(renderer);
+            renderer = SDL_CreateRenderer(window, -1, renderer_flags);
+            if (!renderer) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                             "ps5agc accepted unsupported no-VSYNC mode: %s\n",
-                             SDL_GetError());
+                             "Renderer recreation %d/%d failed: %s\n",
+                             recreation, recreate_count, SDL_GetError());
+                return 4;
+            }
+            if (ValidateRenderer(renderer, requested_renderer) < 0) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "Renderer recreation %d/%d validation failed\n",
+                             recreation, recreate_count);
                 return 4;
             }
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "ps5agc no-VSYNC rejection: PASS (%s)\n",
-                        SDL_GetError());
-            SDL_ClearError();
+                        "Renderer recreation %d/%d: PASS\n",
+                        recreation, recreate_count);
         }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Renderer recreation: PASS count=%d\n", recreate_count);
     }
     if (target_probe) {
         SDL_Texture *target;

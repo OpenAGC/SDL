@@ -180,10 +180,11 @@ waits on the bounded EOP fence. Display readback is sourced from that actual
 registered buffer. This avoids using a write-combined scanout allocation as a
 GPU render target while also avoiding a full-frame CPU copy.
 
-Renderer destruction calls the public `agcDriverShutdown` lifecycle boundary
-after releasing SDL-owned allocations. This is also done on partial renderer
-creation failure, before presentation ownership is returned to the software
-path. OpenAGC 0.2.0 pairs its system-flexible allocations with
+Renderer destruction closes VideoOut, calls the public `agcDriverShutdown`
+lifecycle boundary, and then releases SDL-owned GPU-visible allocations. This
+order is also used on partial renderer creation failure, before presentation
+ownership is returned to the software path. OpenAGC 0.2.0 pairs its
+system-flexible allocations with
 `sceKernelReleaseFlexibleMemory`; repeating an allocation-failure probe on
 firmware 5.50 reused the same addresses for all nine internal regions, showing
 that the failed launch no longer consumes additional quota. Flexible memory
@@ -237,6 +238,15 @@ accelerated capability without naming a driver. Expected creation failures can
 be qualified without weakening lifecycle checks by setting
 `SDL_PS5AGC_EXPECT_FAILURE=1` and the required fixed-string
 `SDL_PS5AGC_EXPECT_ERROR` oracle.
+
+Set `SDL_PS5AGC_PROBE_KIND=recreate` to run the opt-in renderer lifecycle
+probe. `SDL_PS5AGC_RECREATE_COUNT` defaults to eight destroy/create cycles in
+one process. Every new instance must reacquire OpenAGC and VideoOut, select the
+requested renderer, preserve its advertised VSYNC state after rejecting
+no-VSYNC, and then release ownership cleanly. The final instance must still
+return exact red from the display readback and present successfully. This is a
+bounded qualification of repeated driver shutdown/reinitialization and GPU
+allocation reuse; it is not run by default.
 
 `test/run_ps5agc_render_suite.sh` runs SDL's automated `Render` suite with the
 renderer explicitly pinned to `ps5agc`. The automation harness propagates its
