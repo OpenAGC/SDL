@@ -174,6 +174,13 @@ native YUV color within expected rounding, and target readback. Direct
 VideoOut/display-surface readback uses the same exact-color probe and remains
 to be revalidated after the scanout separation change.
 
+`test/run_ps5agc_display_probe.sh` performs that qualification as a bounded
+one-frame WebSrv launch. It uses ps5debug-NG to remove and reject stale
+`eboot.bin` processes, uploads the required BMP beside the ELF, requires the
+exact readback oracle, rejects PID-scoped fatal events and GPU resets, verifies
+the SystemService self-exit sequence, and confirms WebSrv remains reachable.
+Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it.
+
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and
 `SceAgcDriver` after SDL's existing platform dependencies.
