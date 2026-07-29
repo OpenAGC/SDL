@@ -263,6 +263,25 @@ and strict failure of an explicit `ps5agc` request. Those optional cases prove
 the backend-absent build contract; they do not replace qualification on
 hardware that OpenAGC itself rejects.
 
+The local backend-absent artifact can be reproduced with:
+
+```sh
+cmake -S . -B build-ps5-no-openagc \
+  -DCMAKE_TOOLCHAIN_FILE=/path/to/prospero.cmake \
+  -DCMAKE_CXX_COMPILER_WORKS=1 \
+  -DSDL_PS5_OPENAGC=OFF -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+  -DSDL_TEST=ON -DSDL_TESTS=ON
+cmake --build build-ps5-no-openagc --target testyuv -j4
+PS5_HOST=10.0.1.41 \
+SDL_PS5AGC_DISABLED_ELF=build-ps5-no-openagc/test/testyuv \
+  test/run_ps5agc_selection_matrix.sh
+```
+
+`CMAKE_CXX_COMPILER_WORKS=1` only bypasses the SDK's unrelated C++ runtime
+link probe; SDL and this test executable are built as C. The current local ELF
+is `build-ps5-no-openagc/test/testyuv` with SHA-256
+`9ebacacf637b1c727af94de2baadf8e6df9e5bc17c62ebb6ec76010b523bb43d`.
+
 `test/run_ps5agc_render_suite.sh` runs SDL's automated `Render` suite with the
 renderer explicitly pinned to `ps5agc`. The automation harness propagates its
 `--renderer` argument to suite-created renderers and logs their actual driver,
