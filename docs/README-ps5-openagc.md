@@ -410,6 +410,10 @@ Renderer presentation is fail-stop: a bounded OpenAGC GPU wait or VideoOut
 presentation failure is returned to SDL and prevents any later submission from
 reusing a buffer whose state is unknown. Renderer teardown closes VideoOut,
 shuts the OpenAGC driver down, and only then releases SDL's GPU-visible pools.
+Resource-usage bookkeeping for a draw batch is transactional: target and
+sampled-texture usages are committed only after the batch reaches its bounded
+fence. If command recording fails before submission, the discarded batch
+cannot leave SDL claiming that an unexecuted transition changed GPU state.
 The software fallback also gives its flip-event wait a one-second bound, so a
 missing VideoOut event becomes an SDL error instead of trapping an application
 indefinitely on a black screen. Because OpenAGC currently exposes FIFO/VSYNC

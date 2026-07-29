@@ -1003,6 +1003,30 @@ static void PS5AGC_UpdateScissor(PS5AGC_RenderData *data,
     frame->scissor.bottom = (Uint32)SDL_max(result.y + result.h, result.y);
 }
 
+static int PS5AGC_RecordSampledTransition(
+    SceAgcCb *cb, PS5AGC_TextureData *texture,
+    PS5AGC_TextureData **pending_textures, size_t pending_capacity,
+    size_t *pending_count)
+{
+    size_t i;
+
+    for (i = 0; i < *pending_count; ++i) {
+        if (pending_textures[i] == texture) {
+            return 0;
+        }
+    }
+    if (*pending_count >= pending_capacity) {
+        return SDL_SetError("ps5agc sampled-texture transition table overflow");
+    }
+    if (PS5AGC_Transition(cb, texture->usage,
+                          AGC_GFX1013_RESOURCE_USAGE_SHADER_READ) < 0) {
+        return -1;
+    }
+    pending_textures[*pending_count] = texture;
+    ++*pending_count;
+    return 0;
+}
+
 static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
                                   SDL_RenderCommand *cmd,
                                   void *queued_vertices, size_t vertsize)
@@ -1025,25 +1049,49 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
     AgcGfx1013FrameState frame;
     AgcGfx1013GraphicsDefaultStats stats;
     SceAgcCb cb;
+    SDL_RenderCommand *scan;
+    PS5AGC_TextureData **pending_textures = NULL;
+    size_t pending_capacity = 0u;
+    size_t pending_count = 0u;
     size_t upload_offset = 0u;
+    size_t commit_index;
+    SDL_bool pending_isstack = SDL_FALSE;
+    int result = -1;
     int32_t error;
     (void)vertsize;
 
     if (!cmd) {
         return 0;
     }
+    for (scan = cmd; scan; scan = scan->next) {
+        if ((scan->command == SDL_RENDERCMD_DRAW_POINTS ||
+             scan->command == SDL_RENDERCMD_GEOMETRY) &&
+            scan->data.draw.texture) {
+            ++pending_capacity;
+        }
+    }
+    if (pending_capacity > 0u) {
+        if (pending_capacity > SIZE_MAX / sizeof(*pending_textures)) {
+            return SDL_OutOfMemory();
+        }
+        pending_textures = SDL_small_alloc(
+            PS5AGC_TextureData *, pending_capacity, &pending_isstack);
+        if (!pending_textures) {
+            return SDL_OutOfMemory();
+        }
+    }
     agcCbInit(&cb, data->command_memory[display_index].cpu_address,
               PS5AGC_COMMAND_BYTES);
     if (PS5AGC_Transition(&cb, *target_usage,
                           AGC_GFX1013_RESOURCE_USAGE_RENDER_TARGET) < 0) {
-        return -1;
+        goto done;
     }
-    *target_usage = AGC_GFX1013_RESOURCE_USAGE_RENDER_TARGET;
     SDL_zero(frame);
     error = agcGfx1013InitColorTarget(&frame.color_target, target_address,
                                       surface_width, (Uint32)height, format);
     if (error != AGC_OK) {
-        return PS5AGC_SetError("initializing an OpenAGC color target", error);
+        PS5AGC_SetError("initializing an OpenAGC color target", error);
+        goto done;
     }
     frame.color_target_count = 1u;
     frame.viewport.width = (Uint32)width;
@@ -1059,7 +1107,8 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
     frame.instance_step_rate = 1u;
     error = agcGfx1013BuildFramePrologue(&cb, &frame, &stats);
     if (error != AGC_OK) {
-        return PS5AGC_SetError("recording the OpenAGC frame prologue", error);
+        PS5AGC_SetError("recording the OpenAGC frame prologue", error);
+        goto done;
     }
     data->viewport.x = 0;
     data->viewport.y = 0;
@@ -1074,7 +1123,8 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
             PS5AGC_UpdateScissor(data, &frame);
             error = agcGfx1013SetScissor(&cb, &frame.scissor);
             if (error != AGC_OK) {
-                return PS5AGC_SetError("recording an OpenAGC viewport scissor", error);
+                PS5AGC_SetError("recording an OpenAGC viewport scissor", error);
+                goto done;
             }
             break;
         case SDL_RENDERCMD_SETCLIPRECT:
@@ -1083,7 +1133,8 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
             PS5AGC_UpdateScissor(data, &frame);
             error = agcGfx1013SetScissor(&cb, &frame.scissor);
             if (error != AGC_OK) {
-                return PS5AGC_SetError("recording an OpenAGC clip scissor", error);
+                PS5AGC_SetError("recording an OpenAGC clip scissor", error);
+                goto done;
             }
             break;
         case SDL_RENDERCMD_CLEAR:
@@ -1097,7 +1148,8 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
             frame.scissor = (AgcGfx1013ScissorState){ 0, 0, (Uint32)width, (Uint32)height };
             error = agcGfx1013SetScissor(&cb, &frame.scissor);
             if (error != AGC_OK) {
-                return PS5AGC_SetError("recording an OpenAGC clear scissor", error);
+                PS5AGC_SetError("recording an OpenAGC clear scissor", error);
+                goto done;
             }
             for (i = 0; i < 6; ++i) {
                 clear_vertices[i].x = corners[i * 2] * width;
@@ -1110,13 +1162,14 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
             }
             if (PS5AGC_RecordDraw(data, &cb, clear_vertices, 6u, NULL,
                                   SDL_BLENDMODE_NONE, &upload_offset, &frame) < 0) {
-                return -1;
+                goto done;
             }
             data->viewport = saved_viewport;
             frame.scissor = saved_scissor;
             error = agcGfx1013SetScissor(&cb, &frame.scissor);
             if (error != AGC_OK) {
-                return PS5AGC_SetError("restoring an OpenAGC scissor", error);
+                PS5AGC_SetError("restoring an OpenAGC scissor", error);
+                goto done;
             }
             break;
         }
@@ -1127,17 +1180,21 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
                 (PS5AGC_TextureData *)cmd->data.draw.texture->driverdata : NULL;
             const PS5AGC_Vertex *vertices = (const PS5AGC_Vertex *)
                 ((const Uint8 *)queued_vertices + cmd->data.draw.first);
-            if (sampled && PS5AGC_Transition(&cb, sampled->usage,
-                                             AGC_GFX1013_RESOURCE_USAGE_SHADER_READ) < 0) {
-                return -1;
-            }
             if (sampled) {
-                sampled->usage = AGC_GFX1013_RESOURCE_USAGE_SHADER_READ;
+                if (sampled == target_texture) {
+                    SDL_SetError("ps5agc cannot sample the active render target");
+                    goto done;
+                }
+                if (PS5AGC_RecordSampledTransition(
+                        &cb, sampled, pending_textures, pending_capacity,
+                        &pending_count) < 0) {
+                    goto done;
+                }
             }
             if (PS5AGC_RecordDraw(data, &cb, vertices, cmd->data.draw.count,
                                   cmd->data.draw.texture, cmd->data.draw.blend,
                                   &upload_offset, &frame) < 0) {
-                return -1;
+                goto done;
             }
             break;
         }
@@ -1149,17 +1206,27 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
     if (upload_offset != 0u &&
         PS5AGC_Flush(&data->upload_memory, 0, upload_offset,
                      "publishing OpenAGC draw vertices") < 0) {
-        return -1;
+        goto done;
     }
     if (PS5AGC_SubmitAndWait(data, display_index, &cb,
                              "submitting OpenAGC draws") < 0) {
-        return -1;
+        goto done;
+    }
+    *target_usage = AGC_GFX1013_RESOURCE_USAGE_RENDER_TARGET;
+    for (commit_index = 0; commit_index < pending_count; ++commit_index) {
+        pending_textures[commit_index]->usage = AGC_GFX1013_RESOURCE_USAGE_SHADER_READ;
     }
     if (!target_texture) {
         data->screen_dirty = SDL_TRUE;
         data->screen_synced = SDL_FALSE;
     }
-    return 0;
+    result = 0;
+
+done:
+    if (pending_textures) {
+        SDL_small_free(pending_textures, pending_isstack);
+    }
+    return result;
 }
 
 static int PS5AGC_SyncDisplayBuffer(PS5AGC_RenderData *data, Uint32 index)
