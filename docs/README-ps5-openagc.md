@@ -188,7 +188,7 @@ reset, or stale process.
 
 `test/run_ps5agc_display_probe.sh` performs that qualification as a bounded
 WebSrv launch. It uses ps5debug-NG to remove and reject stale
-`eboot.bin` processes, uploads the required BMP beside the ELF, requires the
+`eboot.elf` and `eboot.bin` processes, uploads the required BMP beside the ELF, requires the
 exact readback oracle, rejects PID-scoped fatal events and GPU resets, verifies
 the SystemService self-exit sequence, rejects reboot or shutdown sequences, and
 confirms WebSrv remains reachable.
@@ -201,6 +201,55 @@ accelerated capability without naming a driver. Expected creation failures can
 be qualified without weakening lifecycle checks by setting
 `SDL_PS5AGC_EXPECT_FAILURE=1` and the required fixed-string
 `SDL_PS5AGC_EXPECT_ERROR` oracle.
+
+`test/run_ps5agc_render_suite.sh` runs SDL's automated `Render` suite with the
+renderer explicitly pinned to `ps5agc`. The automation harness propagates its
+`--renderer` argument to suite-created renderers and logs their actual driver,
+so a pass cannot silently come from the software fallback. The runner requires
+all four enabled render tests to pass, rejects fatal, reset, and power events,
+and applies the same exact-process lifecycle checks as the display probe. Set
+`SDL_PS5AGC_AUTOMATION_FILTER` to one `render_test*` name to isolate a failing
+case.
+
+### Recovering a stale WebSrv application
+
+If a failed raw-ELF test leaves a black screen, do not launch another renderer
+test until ps5debug-NG confirms that the old process is gone. WebSrv reports
+these payloads as `eboot.elf` in the process list even though kernel EXEC lines
+refer to `/app0/eboot.bin`; qualification scripts therefore check both exact
+names.
+
+The guarded recovery payload already available in the adjacent Vulkan-PS5
+workspace is:
+
+```
+../Vulkan-PS5/build-prospero-m2/vulkan_ps5_process_cleanup.elf
+```
+
+Its source is `Vulkan-PS5/examples/process_cleanup/main.c`, and its CMake target
+is `vulkan_ps5_process_cleanup`. The local artifact qualified on 2026-07-29 has
+SHA-256 `9fd6b41cf2ea87989c4217234c6f34c96a1ca5dc482355af1258539db77d4d76`.
+It refuses to act unless exactly one *other* `eboot.elf` exists. It first asks
+SystemService to terminate that app and sends `SIGKILL` only if the same PID
+remains. Upload and start it through WebSrv homebrew, not `prospero-deploy`:
+
+```sh
+PS5_HOST=10.0.1.41
+CLEANUP_ELF=../Vulkan-PS5/build-prospero-m2/vulkan_ps5_process_cleanup.elf
+curl -sS "ftp://${PS5_HOST}:2121/" \
+  --quote "MKD /data/homebrew/sdl_ps5agc_cleanup" >/dev/null || true
+curl -sS -T "$CLEANUP_ELF" \
+  "ftp://${PS5_HOST}:2121/data/homebrew/sdl_ps5agc_cleanup/eboot.elf"
+curl -sS --get "http://${PS5_HOST}:8080/hbldr" \
+  --data-urlencode pipe=1 --data-urlencode daemon=0 \
+  --data-urlencode path=/data/homebrew/sdl_ps5agc_cleanup/eboot.elf \
+  --data-urlencode cwd=/data/homebrew/sdl_ps5agc_cleanup \
+  --data-urlencode args=
+```
+
+`process-cleanup: refusing stale eboot count/status=1` means no other stale
+`eboot.elf` remained when the recovery payload inspected the process table; it
+then terminates itself without targeting anything.
 
 `test/run_ps5agc_yuv_matrix.sh` runs 12 isolated WebSrv launches covering IYUV,
 YV12, NV12, and NV21 under JPEG, BT.601, and BT.709 conversion. Each launch

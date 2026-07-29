@@ -89,6 +89,12 @@ int main(int argc, char *argv[])
         i += consumed;
     }
 
+    /* The automation suites create their own windows and renderers after
+       SDLTest_CommonInit(). Honor --renderer for those renderers too. */
+    if (state->renderdriver) {
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, state->renderdriver);
+    }
+
     /* Initialize common state */
     if (!SDLTest_CommonInit(state)) {
         quit(2);

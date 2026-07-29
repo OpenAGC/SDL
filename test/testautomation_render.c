@@ -44,6 +44,7 @@ void InitCreateRenderer(void *arg)
 {
     int posX = 100, posY = 100, width = 320, height = 240;
     int renderer_flags = SDL_RENDERER_ACCELERATED;
+    SDL_RendererInfo renderer_info;
     renderer = NULL;
     window = SDL_CreateWindow("render_testCreateRenderer", posX, posY, width, height, 0);
     SDLTest_AssertPass("SDL_CreateWindow()");
@@ -58,10 +59,18 @@ void InitCreateRenderer(void *arg)
 
     renderer = SDL_CreateRenderer(window, -1, renderer_flags);
     SDLTest_AssertPass("SDL_CreateRenderer()");
-    SDLTest_AssertCheck(renderer != NULL, "Check SDL_CreateRenderer result");
+    SDLTest_AssertCheck(renderer != NULL,
+                        "Check SDL_CreateRenderer result, error: %s",
+                        renderer ? "none" : SDL_GetError());
     if (renderer == NULL) {
         SDL_DestroyWindow(window);
         return;
+    }
+
+    if (SDL_GetRendererInfo(renderer, &renderer_info) == 0) {
+        SDLTest_Log("Render suite renderer: %s", renderer_info.name);
+    } else {
+        SDLTest_LogError("SDL_GetRendererInfo() failed with error: %s", SDL_GetError());
     }
 }
 
