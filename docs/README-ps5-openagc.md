@@ -21,7 +21,9 @@ only authority for firmware, ABI, hardware, mode, and compatibility policy.
   partial initialization failure releases it.
 - Query display resolution and refresh behavior with
   `agcVideoOutGetDefaultMode`; SDL does not contain firmware or hardware
-  qualification tables.
+  qualification tables. While `ps5agc` owns presentation, its reported mode
+  is also SDL's public current and desktop display mode; destroying the
+  renderer restores the software backend's prior mode.
 - Keep the existing CPU tiled presenter only in the software framebuffer path.
 - Use three flexible-memory render targets and three caller-owned direct
   VideoOut buffers. Native draws write the current render target, then a
@@ -190,6 +192,9 @@ system-flexible mapping capacity before the first 8,294,400-byte 1080p target.
 Consequently, a 3840x2160 default mode is no longer rejected by a hard-coded
 SDL pool limit, but 4K remains unqualified until OpenAGC exposes it on accepted
 hardware and the guarded renderer suite passes at that mode.
+Every guarded `testyuv` launch using `ps5agc` now requires its renderer output,
+current display mode, and desktop display mode to agree, including the integer
+refresh rate derived from OpenAGC's millihertz value.
 Before a flip or display readback, SDL transitions the completed surface to copy
 source and the matching registered buffer to copy destination, records
 `agcGfx1013CopyBuffer`, transitions the destination for host readback, and

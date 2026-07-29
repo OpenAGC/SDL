@@ -108,6 +108,9 @@ typedef struct PS5AGC_RenderData
     AgcGfx1013Wave32VsPsState shaders[PS5AGC_SHADER_COUNT];
     AgcGfx1013ResourceUsage render_usage[PS5AGC_BUFFER_COUNT];
     AgcGfx1013ResourceUsage display_usage[PS5AGC_BUFFER_COUNT];
+    SDL_VideoDisplay *display;
+    SDL_DisplayMode previous_desktop_mode;
+    SDL_DisplayMode previous_current_mode;
     Uint64 frame_id;
     Uint32 fence_value[PS5AGC_BUFFER_COUNT];
     SDL_Rect viewport;
@@ -116,6 +119,7 @@ typedef struct PS5AGC_RenderData
     SDL_bool screen_dirty;
     SDL_bool screen_synced;
     SDL_bool submission_failed;
+    SDL_bool display_mode_changed;
 } PS5AGC_RenderData;
 
 static size_t PS5AGC_Align(size_t value, size_t alignment)
@@ -454,6 +458,42 @@ static int PS5AGC_GetOutputSize(SDL_Renderer *renderer, int *w, int *h)
     *w = (int)data->mode.width;
     *h = (int)data->mode.height;
     return 0;
+}
+
+static void PS5AGC_UpdateDisplayMode(PS5AGC_RenderData *data,
+                                     SDL_Window *window)
+{
+    SDL_DisplayMode mode;
+    Uint32 refresh_rate;
+
+    data->display = SDL_GetDisplayForWindow(window);
+    if (!data->display) {
+        return;
+    }
+    data->previous_desktop_mode = data->display->desktop_mode;
+    data->previous_current_mode = data->display->current_mode;
+    SDL_zero(mode);
+    mode.format = SDL_PIXELFORMAT_ABGR8888;
+    mode.w = (int)data->mode.width;
+    mode.h = (int)data->mode.height;
+    refresh_rate = data->mode.refresh_millihz / 1000u;
+    if ((data->mode.refresh_millihz % 1000u) >= 500u) {
+        ++refresh_rate;
+    }
+    mode.refresh_rate = (int)refresh_rate;
+    SDL_SetDesktopDisplayMode(data->display, &mode);
+    SDL_SetCurrentDisplayMode(data->display, &mode);
+    data->display_mode_changed = SDL_TRUE;
+}
+
+static void PS5AGC_RestoreDisplayMode(PS5AGC_RenderData *data)
+{
+    if (!data->display_mode_changed || !data->display) {
+        return;
+    }
+    SDL_SetDesktopDisplayMode(data->display, &data->previous_desktop_mode);
+    SDL_SetCurrentDisplayMode(data->display, &data->previous_current_mode);
+    data->display_mode_changed = SDL_FALSE;
 }
 
 static SDL_bool PS5AGC_ConvertBlendFactor(SDL_BlendFactor input,
@@ -1411,6 +1451,7 @@ static void PS5AGC_DestroyData(PS5AGC_RenderData *data)
     if (data->video_out) {
         agcVideoOutClose(data->video_out);
     }
+    PS5AGC_RestoreDisplayMode(data);
     (void)agcDriverShutdown();
     agcGpuMemoryFreeDirect(&data->display_memory);
     agcGpuMemoryFreeDirect(&data->upload_memory);
@@ -1591,6 +1632,7 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
     }
     SDL_Log("ps5agc: native renderer ready at %ux%u",
             data->mode.width, data->mode.height);
+    PS5AGC_UpdateDisplayMode(data, window);
 
     renderer->GetOutputSize = PS5AGC_GetOutputSize;
     renderer->SupportsBlendMode = PS5AGC_SupportsBlendMode;

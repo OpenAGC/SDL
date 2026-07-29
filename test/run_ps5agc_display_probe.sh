@@ -455,6 +455,12 @@ else
        ! grep -F "Renderer selected: ${expected_renderer}" "$log" >/dev/null; then
         oracle_failed=1
     fi
+    if [ "$expected_renderer" = ps5agc ] &&
+       [ "$probe_kind" != automation ] && [ "$probe_kind" != standalone ] &&
+       [ "$probe_kind" != failure ] &&
+       ! grep -F 'ps5agc display mode: ' "$log" >/dev/null; then
+        oracle_failed=1
+    fi
     if [ "$oracle_failed" -ne 0 ]; then
         wait_eboot_absent || true
         echo "display probe did not produce the expected renderer and readback oracle; log: $log" >&2

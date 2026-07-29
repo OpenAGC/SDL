@@ -346,6 +346,31 @@ static int ValidateRenderer(SDL_Renderer *renderer, const char *requested_render
     }
     if (SDL_strcmp(renderer_info.name, "ps5agc") == 0) {
         char vsync_error[256];
+        SDL_DisplayMode desktop_mode;
+        SDL_DisplayMode current_mode;
+        int output_width;
+        int output_height;
+
+        if (SDL_GetRendererOutputSize(renderer, &output_width, &output_height) < 0 ||
+            SDL_GetDesktopDisplayMode(0, &desktop_mode) < 0 ||
+            SDL_GetCurrentDisplayMode(0, &current_mode) < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5agc display-mode query failed: %s\n", SDL_GetError());
+            return -1;
+        }
+        if (desktop_mode.w != output_width || desktop_mode.h != output_height ||
+            current_mode.w != output_width || current_mode.h != output_height ||
+            desktop_mode.refresh_rate != current_mode.refresh_rate) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5agc display mode %dx%d/%dx%d does not match output %dx%d\n",
+                         desktop_mode.w, desktop_mode.h,
+                         current_mode.w, current_mode.h,
+                         output_width, output_height);
+            return -1;
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "ps5agc display mode: %dx%d@%d\n",
+                    current_mode.w, current_mode.h, current_mode.refresh_rate);
 
         SDL_ClearError();
         if (SDL_RenderSetVSync(renderer, 1) < 0) {
