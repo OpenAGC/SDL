@@ -83,7 +83,8 @@ curl -sS --connect-timeout 3 --max-time "$websrv_timeout" --get \
     --data-urlencode daemon=0 \
     --data-urlencode "path=${remote_dir}/eboot.elf" \
     --data-urlencode "cwd=$remote_dir" \
-    --data-urlencode "args=--display-probe" >"$log" 2>&1 || launch_status=$?
+    --data-urlencode "args=--display-probe ${remote_dir}/testyuv.bmp" \
+    >"$log" 2>&1 || launch_status=$?
 
 sleep 2
 nc -w 5 "$PS5_HOST" "$klog_port" >"$klog" 2>&1 || true

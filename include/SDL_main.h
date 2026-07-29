@@ -108,6 +108,11 @@
    void reset_IOP(); \
    void reset_IOP() {}
 
+#elif defined(__PROSPERO__)
+/* On PS5 SDL provides a main function that initializes SystemService and
+   terminates the raw ELF through the owning app instead of returning. */
+#define SDL_MAIN_AVAILABLE
+
 #elif defined(__3DS__)
 /*
   On N3DS, SDL provides a main function that sets up the screens

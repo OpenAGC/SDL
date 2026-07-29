@@ -171,8 +171,9 @@ read back `0xff0000ff` after a red clear, `0xffe8e9e7` after sampling the
 ABGR8888 test image, and `0xffe8e8e6` after sampling its native YV12/JPEG
 conversion. These results validate render-target clear, packed texture color,
 native YUV color within expected rounding, and target readback. Direct
-VideoOut/display-surface readback uses the same exact-color probe and remains
-to be revalidated after the scanout separation change.
+VideoOut/display-surface readback was subsequently hardware-qualified with the
+same exact-color probe: firmware 5.50 returned `0xff0000ff` from the registered
+scanout buffer after the red clear.
 
 `test/run_ps5agc_display_probe.sh` performs that qualification as a bounded
 one-frame WebSrv launch. It uses ps5debug-NG to remove and reject stale
@@ -180,6 +181,11 @@ one-frame WebSrv launch. It uses ps5debug-NG to remove and reject stale
 exact readback oracle, rejects PID-scoped fatal events and GPU resets, verifies
 the SystemService self-exit sequence, and confirms WebSrv remains reachable.
 Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it.
+The firmware 5.50 qualification completed through `KillApp()` followed by
+`All processes exited`, with no app crash, fatal signal, GFX reset, or stale
+native-game process. PS5 executables use SDL2main's non-returning SystemService
+self-termination path; returning from a raw WebSrv-loaded ELF can otherwise
+fall through its entry trampoline and raise a post-test page fault.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and

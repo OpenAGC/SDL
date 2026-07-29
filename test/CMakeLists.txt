@@ -69,7 +69,7 @@ if(SDL_INSTALL_TESTS)
     include(GNUInstallDirs)
 endif()
 
-if(N3DS)
+if(N3DS OR PS5)
     link_libraries(SDL2::SDL2main)
 endif()
 
