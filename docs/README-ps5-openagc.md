@@ -352,6 +352,18 @@ pipe open until the caller's timeout after printing that line; the timeout does
 not mean a renderer was found or killed. Keep this payload as a manual recovery
 tool only—the automated qualification runner does not launch it.
 
+Renderer presentation is fail-stop: a bounded OpenAGC GPU wait or VideoOut
+presentation failure is returned to SDL and prevents any later submission from
+reusing a buffer whose state is unknown. Renderer teardown closes VideoOut,
+shuts the OpenAGC driver down, and only then releases SDL's GPU-visible pools.
+The software fallback also gives its flip-event wait a one-second bound, so a
+missing VideoOut event becomes an SDL error instead of trapping an application
+indefinitely on a black screen. Because OpenAGC currently exposes FIFO/VSYNC
+presentation only, `SDL_RenderSetVSync(renderer, 0)` returns the renderer's
+unsupported-mode error and restores SDL's prior VSYNC state instead of
+pretending that presentation changed. Every guarded `testyuv` qualification
+launch checks this contract before drawing.
+
 `test/run_ps5agc_yuv_matrix.sh` runs 12 isolated WebSrv launches covering IYUV,
 YV12, NV12, and NV21 under JPEG, BT.601, and BT.709 conversion. Each launch
 updates the 555x333 streaming texture through an odd `1,1 553x331` rectangle

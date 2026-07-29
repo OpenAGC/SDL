@@ -563,6 +563,20 @@ int main(int argc, char **argv)
                          requested_renderer, renderer_info.name);
             return 4;
         }
+        if (SDL_strcmp(renderer_info.name, "ps5agc") == 0) {
+            SDL_ClearError();
+            if (SDL_RenderSetVSync(renderer, 0) == 0 ||
+                SDL_strstr(SDL_GetError(), "FIFO/VSYNC") == NULL) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "ps5agc accepted unsupported no-VSYNC mode: %s\n",
+                             SDL_GetError());
+                return 4;
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "ps5agc no-VSYNC rejection: PASS (%s)\n",
+                        SDL_GetError());
+            SDL_ClearError();
+        }
     }
     if (target_probe) {
         SDL_Texture *target;

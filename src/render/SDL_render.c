@@ -4524,22 +4524,44 @@ SDL_BlendOperation SDL_GetBlendModeAlphaOperation(SDL_BlendMode blendMode)
 
 int SDL_RenderSetVSync(SDL_Renderer *renderer, int vsync)
 {
+    SDL_bool previous_wanted_vsync;
+    SDL_bool previous_simulate_vsync;
+    SDL_bool use_simulated_vsync = SDL_FALSE;
+    Uint32 previous_info_flags;
+
     CHECK_RENDERER_MAGIC(renderer, -1);
 
     if (vsync != 0 && vsync != 1) {
         return SDL_Unsupported();
     }
 
+    previous_wanted_vsync = renderer->wanted_vsync;
+    previous_simulate_vsync = renderer->simulate_vsync;
+    previous_info_flags = renderer->info.flags;
     renderer->wanted_vsync = vsync ? SDL_TRUE : SDL_FALSE;
 
-    if (!renderer->SetVSync ||
-        renderer->SetVSync(renderer, vsync) != 0) {
+    if (renderer->SetVSync) {
+        if (renderer->SetVSync(renderer, vsync) != 0) {
+            if (!vsync) {
+                renderer->wanted_vsync = previous_wanted_vsync;
+                renderer->simulate_vsync = previous_simulate_vsync;
+                renderer->info.flags = previous_info_flags;
+                return -1;
+            }
+            use_simulated_vsync = SDL_TRUE;
+        }
+    } else {
+        use_simulated_vsync = SDL_TRUE;
+    }
+
+    if (use_simulated_vsync) {
         renderer->simulate_vsync = vsync ? SDL_TRUE : SDL_FALSE;
         if (renderer->simulate_vsync) {
             renderer->info.flags |= SDL_RENDERER_PRESENTVSYNC;
         } else {
             renderer->info.flags &= ~SDL_RENDERER_PRESENTVSYNC;
         }
+        SDL_ClearError();
     } else {
         renderer->simulate_vsync = SDL_FALSE;
     }

@@ -37,6 +37,7 @@
 #define PS5_SOFTWARE_HEIGHT 1080
 #define PS5_SOFTWARE_BUFFER_COUNT 2
 #define PS5_SOFTWARE_MEMORY_SIZE 0x4000000
+#define PS5_SOFTWARE_PRESENT_TIMEOUT_US 1000000u
 
 int PS5_AcquirePresentation(SDL_VideoDevice *device,
                             PS5_PresentationOwner owner)
@@ -262,7 +263,9 @@ static int PS5_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
     uint8_t idx = frame_id % 2;
     SDL_Surface *surface;
     struct kevent evt;
+    uint32_t timeout = PS5_SOFTWARE_PRESENT_TIMEOUT_US;
     int junk;
+    int wait_error;
 
     surface = window->surface;
     if (!surface) {
@@ -288,8 +291,11 @@ static int PS5_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
         return SDL_SetError("sceVideoOutSubmitFlip: %s", strerror(errno));
     }
 
-    if (sceKernelWaitEqueue(device_data->evt_queue, &evt, 1, &junk, 0)) {
-        return SDL_SetError("sceKernelWaitEqueue: %s", strerror(errno));
+    wait_error = sceKernelWaitEqueue(device_data->evt_queue, &evt, 1, &junk,
+                                     &timeout);
+    if (wait_error) {
+        return SDL_SetError("sceKernelWaitEqueue failed: 0x%08x",
+                            (unsigned int)wait_error);
     }
     frame_id++;
 

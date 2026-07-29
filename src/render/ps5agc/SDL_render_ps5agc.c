@@ -1265,6 +1265,9 @@ static int PS5AGC_Present(SDL_Renderer *renderer)
     SceAgcCb cb;
     int32_t error;
 
+    if (data->submission_failed) {
+        return SDL_SetError("ps5agc is unavailable after a GPU or presentation failure");
+    }
     if (!data->screen_dirty) {
         return 0;
     }
@@ -1285,6 +1288,7 @@ static int PS5AGC_Present(SDL_Renderer *renderer)
     error = agcVideoOutPresent(data->video_out, index, data->frame_id,
                                PS5AGC_PRESENT_TIMEOUT_US);
     if (error != AGC_OK) {
+        data->submission_failed = SDL_TRUE;
         return PS5AGC_SetError("agcVideoOutPresent", error);
     }
     ++data->frame_id;
@@ -1313,10 +1317,10 @@ static void PS5AGC_DestroyData(PS5AGC_RenderData *data)
     if (data->video_out) {
         agcVideoOutClose(data->video_out);
     }
+    (void)agcDriverShutdown();
     agcGpuMemoryFreeDirect(&data->display_memory);
     agcGpuMemoryFreeDirect(&data->upload_memory);
     agcGpuMemoryFreeFlexible(&data->renderer_memory);
-    (void)agcDriverShutdown();
     PS5_ReleasePresentation(data->device, PS5_PRESENTATION_OPENAGC);
     SDL_free(data);
 }
