@@ -77,6 +77,8 @@ typedef struct PS5AGC_TextureData
     void *lock_buffer;
     int pitch;
     int plane_pitch[3];
+    Uint32 plane_width[3];
+    Uint32 plane_height[3];
     Uint32 format;
     Uint32 plane_count;
     SDL_ScaleMode scale_mode;
@@ -239,8 +241,7 @@ static int PS5AGC_Transition(SceAgcCb *cb, AgcGfx1013ResourceUsage before,
     return error == AGC_OK ? 0 : PS5AGC_SetError("recording a resource transition", error);
 }
 
-static int PS5AGC_InitDescriptor(PS5AGC_TextureData *texture,
-                                 int width, int height)
+static int PS5AGC_InitDescriptor(PS5AGC_TextureData *texture)
 {
     AgcGfx1013Image2DState image;
     AgcSamplerDescriptor sampler;
@@ -259,8 +260,8 @@ static int PS5AGC_InitDescriptor(PS5AGC_TextureData *texture,
     for (plane = 0; plane < texture->plane_count; ++plane) {
         SDL_zero(image);
         image.address = texture->memory.gpu_address + texture->plane_offset[plane];
-        image.width = plane == 0 ? (Uint32)width : ((Uint32)width + 1u) / 2u;
-        image.height = plane == 0 ? (Uint32)height : ((Uint32)height + 1u) / 2u;
+        image.width = texture->plane_width[plane];
+        image.height = texture->plane_height[plane];
         image.image_type = AGC_GFX1013_IMAGE_TYPE_2D;
         image.dst_sel_x = 4u;
         image.dst_sel_y = 5u;
@@ -517,21 +518,28 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     data->format = texture->format;
     data->scale_mode = texture->scaleMode;
     if (texture->format == SDL_PIXELFORMAT_ABGR8888) {
-        data->pitch = (int)PS5AGC_Align((size_t)texture->w * 4u, 256u);
+        data->pitch = texture->access == SDL_TEXTUREACCESS_TARGET ?
+            (int)PS5AGC_Align((size_t)texture->w * 4u, 256u) : texture->w * 4;
         data->plane_pitch[0] = data->pitch;
+        data->plane_width[0] = texture->access == SDL_TEXTUREACCESS_TARGET ?
+            (Uint32)(data->pitch / 4) : (Uint32)texture->w;
+        data->plane_height[0] = (Uint32)texture->h;
         data->plane_count = 1u;
         data->pixel_bytes = (size_t)data->pitch * texture->h;
     } else {
         chroma_width = (texture->w + 1) / 2;
         chroma_height = (texture->h + 1) / 2;
         data->pitch = texture->w;
-        data->plane_pitch[0] = (int)PS5AGC_Align((size_t)texture->w, 256u);
+        data->plane_pitch[0] = texture->w;
+        data->plane_width[0] = (Uint32)texture->w;
+        data->plane_height[0] = (Uint32)texture->h;
         y_bytes = (size_t)data->plane_pitch[0] * texture->h;
         if (texture->format == SDL_PIXELFORMAT_NV12 ||
             texture->format == SDL_PIXELFORMAT_NV21) {
             data->plane_count = 2u;
-            data->plane_pitch[1] = (int)PS5AGC_Align(
-                (size_t)chroma_width * 2u, 256u);
+            data->plane_pitch[1] = chroma_width * 2;
+            data->plane_width[1] = (Uint32)chroma_width;
+            data->plane_height[1] = (Uint32)chroma_height;
             data->plane_offset[1] = PS5AGC_Align(y_bytes, 256u);
             chroma_bytes = (size_t)data->plane_pitch[1] * chroma_height;
             data->lock_bytes = (size_t)texture->w * texture->h +
@@ -539,9 +547,10 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
             data->pixel_bytes = data->plane_offset[1] + chroma_bytes;
         } else {
             data->plane_count = 3u;
-            data->plane_pitch[1] = (int)PS5AGC_Align(
-                (size_t)chroma_width, 256u);
+            data->plane_pitch[1] = chroma_width;
             data->plane_pitch[2] = data->plane_pitch[1];
+            data->plane_width[1] = data->plane_width[2] = (Uint32)chroma_width;
+            data->plane_height[1] = data->plane_height[2] = (Uint32)chroma_height;
             chroma_bytes = (size_t)data->plane_pitch[1] * chroma_height;
             data->lock_bytes = (size_t)texture->w * texture->h +
                 (size_t)chroma_width * chroma_height * 2u;
@@ -571,7 +580,7 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
         ((Uint8 *)data->memory.cpu_address + data->descriptor_offset);
     data->usage = AGC_GFX1013_RESOURCE_USAGE_UNDEFINED;
     texture->driverdata = data;
-    if (PS5AGC_InitDescriptor(data, texture->w, texture->h) < 0) {
+    if (PS5AGC_InitDescriptor(data) < 0) {
         agcGpuMemoryFreeFlexible(&data->memory);
         SDL_free(data);
         texture->driverdata = NULL;
@@ -726,7 +735,7 @@ static void PS5AGC_SetTextureScaleMode(SDL_Renderer *renderer,
     PS5AGC_TextureData *data = (PS5AGC_TextureData *)texture->driverdata;
     (void)renderer;
     data->scale_mode = scale_mode;
-    if (PS5AGC_InitDescriptor(data, texture->w, texture->h) < 0) {
+    if (PS5AGC_InitDescriptor(data) < 0) {
         SDL_LogError(SDL_LOG_CATEGORY_RENDER, "%s", SDL_GetError());
     }
 }
@@ -754,9 +763,12 @@ static int PS5AGC_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
                                 int size_indices, float scale_x, float scale_y)
 {
     const int count = indices ? num_indices : num_vertices;
+    const PS5AGC_TextureData *texture_data = texture ?
+        (const PS5AGC_TextureData *)texture->driverdata : NULL;
+    const float u_scale = texture_data ?
+        (float)texture->w / (float)texture_data->plane_width[0] : 1.0f;
     PS5AGC_Vertex *vertices;
     int i;
-    (void)texture;
 
     vertices = (PS5AGC_Vertex *)SDL_AllocateRenderVertices(
         renderer, (size_t)count * sizeof(*vertices), 0, &cmd->data.draw.first);
@@ -785,7 +797,7 @@ static int PS5AGC_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
         vertices[i].g = vertex_color->g / 255.0f;
         vertices[i].b = vertex_color->b / 255.0f;
         vertices[i].a = vertex_color->a / 255.0f;
-        vertices[i].u = texcoord ? texcoord[0] : 0.5f;
+        vertices[i].u = texcoord ? texcoord[0] * u_scale : 0.5f;
         vertices[i].v = texcoord ? texcoord[1] : 0.5f;
     }
     return 0;
@@ -1133,7 +1145,8 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
         }
         cmd = cmd->next;
     }
-    if (PS5AGC_Flush(&data->upload_memory, 0, upload_offset,
+    if (upload_offset != 0u &&
+        PS5AGC_Flush(&data->upload_memory, 0, upload_offset,
                      "publishing OpenAGC draw vertices") < 0) {
         return -1;
     }

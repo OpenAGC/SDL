@@ -208,11 +208,14 @@ three-frame firmware 5.50 run returned exact `0xff0000ff` on all three render
 slots with bounded fences, copies, presentations, and a clean process exit.
 
 `test/run_ps5agc_display_probe.sh` performs that qualification as a bounded
-WebSrv launch. It uses ps5debug-NG to remove and reject stale
-`eboot.elf` and `eboot.bin` processes, uploads the required BMP beside the ELF, requires the
+WebSrv launch. It uses read-only ps5debug-NG process-list queries to reject
+stale `eboot.elf` and `eboot.bin` processes, uploads the required BMP beside the ELF, requires the
 exact readback oracle, rejects PID-scoped fatal events and GPU resets, verifies
 the SystemService self-exit sequence, rejects reboot or shutdown sequences, and
-confirms WebSrv remains reachable.
+confirms WebSrv remains reachable. It never debugger-attaches to or kills a
+target process. On every result path it waits up to ten seconds for the
+SystemService lifecycle to remove the exact process; a process that remains is
+reported as stale and prevents the next launch.
 Fatal/reset and power-event checks run before any pixel or test-result oracle,
 so a test can never be reported as an ordinary color mismatch after its GPU
 submission has already destabilized the shell.
@@ -261,18 +264,34 @@ render slots.
 The complete enabled Render suite now reaches every test safely. Renderer-count
 and primitive tests pass; packed-texture `render_testBlit` and
 `render_testBlitColor` remain failed. The first blit mismatch reads transparent
-black where the reference is opaque yellow, which localizes the next correction
-to sampled texture state or data rather than viewport geometry or readback.
+black where the reference is opaque yellow. A focused hardware diagnostic
+confirmed the source texel is `(255,255,0,255)`, its 32x32 descriptor address
+and extent are correct, modulation is white, and direct display of the second
+interpolant produces the expected UV gradient. Replacing the sample operation
+with vertex color also renders the copy geometry. The remaining fault is
+therefore the PSBC image operation or its resource-table binding, not CPU
+upload, row pitch, vertex/UV transport, viewport geometry, or readback.
 Target textures, texture modulation/blending, the native YUV matrix, and longer
 recreation/submission stress remain subsequent qualification gates.
 
 ### Recovering a stale WebSrv application
 
 If a failed raw-ELF test leaves a black screen, do not launch another renderer
-test until ps5debug-NG confirms that the old process is gone. WebSrv reports
+test until a read-only ps5debug-NG process query confirms that the old process
+is gone. Do not attach the debugger to an `eboot.elf` that may be partway
+through SystemService teardown. WebSrv reports
 these payloads as `eboot.elf` in the process list even though kernel EXEC lines
 refer to `/app0/eboot.bin`; qualification scripts therefore check both exact
 names.
+
+One failed shader-diagnostic run on 2026-07-29 ended with an idle graphics
+queue (`rptr == wptr`) and no captured application fatal, GFX reset, or power
+event. The runner then attempted a ps5debug-NG attach/kill while the failed
+raw application was leaving, the attach returned `ERROR`, and the console
+subsequently kernel-panicked and shut down before any cleanup payload was
+launched. The panic itself was not present in the bounded klog, so the attach
+race is the leading cause rather than a proven kernel stack trace. The runner
+no longer performs that operation.
 
 SDL's `testautomation` returns its result through the PS5 SDL2main wrapper
 instead of calling libc `exit()`. This is required even on assertion failure:
@@ -309,7 +328,10 @@ curl -sS --get "http://${PS5_HOST}:8080/hbldr" \
 
 `process-cleanup: refusing stale eboot count/status=1` means no other stale
 `eboot.elf` remained when the recovery payload inspected the process table; it
-then terminates itself without targeting anything.
+then terminates itself without targeting anything. WebSrv may leave the HTTP
+pipe open until the caller's timeout after printing that line; the timeout does
+not mean a renderer was found or killed. Keep this payload as a manual recovery
+tool only—the automated qualification runner does not launch it.
 
 `test/run_ps5agc_yuv_matrix.sh` runs 12 isolated WebSrv launches covering IYUV,
 YV12, NV12, and NV21 under JPEG, BT.601, and BT.709 conversion. Each launch
