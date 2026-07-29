@@ -45,6 +45,7 @@
 #define PS5AGC_RENDER_ALIGNMENT (64u * 1024u)
 #define PS5AGC_RENDERER_POOL_BYTES (25u * 1024u * 1024u)
 #define PS5AGC_DRAW_MODIFIER 0x40000000u
+#define PS5AGC_TEST_FAILURE_ENV "SDL_PS5AGC_TEST_FAILURE"
 
 typedef enum PS5AGC_ShaderKind
 {
@@ -160,6 +161,20 @@ static int PS5AGC_SetError(const char *operation, int32_t error)
                         agcErrorString(error), (unsigned int)error);
 }
 
+static int PS5AGC_InjectFailure(const char *point)
+{
+#ifdef SDL_PS5_OPENAGC_TEST_HOOKS
+    const char *requested = SDL_getenv(PS5AGC_TEST_FAILURE_ENV);
+
+    if (requested && SDL_strcmp(requested, point) == 0) {
+        return SDL_SetError("ps5agc test failure injected at %s", point);
+    }
+#else
+    (void)point;
+#endif
+    return 0;
+}
+
 static int PS5AGC_Flush(const AgcGpuMemory *memory, size_t offset,
                         size_t size, const char *operation)
 {
@@ -211,6 +226,10 @@ static int PS5AGC_SubmitAndWait(PS5AGC_RenderData *data, Uint32 slot,
     submit.command_address = command_memory->gpu_address;
     submit.dword_count = agcCbUsedDwords(cb);
     submit.reserved = 0;
+    if (PS5AGC_InjectFailure("submission") < 0) {
+        data->submission_failed = SDL_TRUE;
+        return -1;
+    }
     error = sceAgcDriverSubmitDcb(&submit);
     if (error != AGC_OK) {
         data->submission_failed = SDL_TRUE;
@@ -1356,6 +1375,10 @@ static int PS5AGC_Present(SDL_Renderer *renderer)
         return -1;
     }
     data->display_usage[index] = AGC_GFX1013_RESOURCE_USAGE_PRESENT;
+    if (PS5AGC_InjectFailure("presentation") < 0) {
+        data->submission_failed = SDL_TRUE;
+        return -1;
+    }
     error = agcVideoOutPresent(data->video_out, index, data->frame_id,
                                PS5AGC_PRESENT_TIMEOUT_US);
     if (error != AGC_OK) {
@@ -1446,6 +1469,9 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
         return NULL;
     }
     data->device = device;
+    if (PS5AGC_InjectFailure("mode-query") < 0) {
+        goto fail;
+    }
     error = agcVideoOutGetDefaultMode(&data->mode);
     if (error != AGC_OK) {
         PS5AGC_SetError("agcVideoOutGetDefaultMode", error);
@@ -1485,6 +1511,9 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
     }
 
     error = sce_agc_initialize();
+    if (error == AGC_OK && PS5AGC_InjectFailure("initialization") < 0) {
+        goto fail;
+    }
     if (error == AGC_OK) {
         error = sce_agc_initialize_internal_memory();
     }
@@ -1520,6 +1549,9 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
         goto fail;
     }
     renderer_bytes = PS5AGC_RENDERER_POOL_BYTES;
+    if (PS5AGC_InjectFailure("allocation") < 0) {
+        goto fail;
+    }
     error = agcGpuMemoryAllocateFlexible(&data->renderer_memory,
         renderer_bytes, 256u, "SDL ps5agc renderer pool");
     if (error != AGC_OK) {

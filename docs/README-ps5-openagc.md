@@ -10,6 +10,9 @@ only authority for firmware, ABI, hardware, mode, and compatibility policy.
 
 - Add `SDL_PS5_OPENAGC`, disabled by default. When enabled, CMake requires the
   `OpenAGC` config package and links only `OpenAGC::openagc`.
+- Keep deterministic failure injection behind
+  `SDL_PS5_OPENAGC_TEST_HOOKS`, which is disabled by default, depends on the
+  OpenAGC renderer, and is intended only for qualification builds.
 - Register `ps5agc` ahead of SDL's software renderer. Automatic renderer
   selection may fall back to software; explicitly requesting `ps5agc` reports
   its OpenAGC error.
@@ -237,9 +240,9 @@ Fatal/reset and power-event checks run before any pixel or test-result oracle,
 so a test can never be reported as an ordinary color mismatch after its GPU
 submission has already destabilized the shell.
 Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it. The
-runner rebuilds its default `testautomation` or `testyuv` target before upload,
-preventing a stale ELF from invalidating a hardware diagnosis. Set
-`SDL_PS5AGC_SKIP_BUILD=1` only when intentionally testing an already-built ELF;
+runner rebuilds its selected automation, YUV, standalone, or failure target
+before upload, preventing a stale ELF from invalidating a hardware diagnosis.
+Set `SDL_PS5AGC_SKIP_BUILD=1` only when intentionally testing an already-built ELF;
 `SDL_PS5AGC_BUILD_JOBS` controls build parallelism. Set
 `SDL_PS5AGC_PROBE_FRAMES` to a positive value for triple-buffer stress; the
 default remains one frame. `SDL_PS5AGC_PROBE_RENDERER=auto` omits the renderer
@@ -276,6 +279,25 @@ selection, an unnamed accelerated request, and explicit software. If
 and strict failure of an explicit `ps5agc` request. Those optional cases prove
 the backend-absent build contract; they do not replace qualification on
 hardware that OpenAGC itself rejects.
+
+`test/run_ps5agc_failure_matrix.sh` runs five deterministic qualification
+cases: default-mode query, driver initialization, renderer-pool allocation,
+GPU submission, and VideoOut presentation. Configure its build with
+`-DSDL_PS5_OPENAGC_TEST_HOOKS=ON`; the guarded launcher refuses to run this
+matrix against a cache without that explicit opt-in. The first three cases
+require an explicit named request and an unnamed accelerated request to return
+the injected upstream-style error, then require ordinary automatic creation to
+fall back to software and present successfully on the same window. Submission
+and presentation failures must make the accelerated renderer fail-stop; after
+destroying it, the software renderer must reacquire presentation and complete
+a frame. Each case is a separate WebSrv application and retains the PID-scoped
+fatal/reset, power-event, exact-process teardown, kernel-warning, and WebSrv
+health gates. The hooks add no firmware, model, ABI, or support-policy logic and
+are omitted from normal and pacbrew builds.
+
+The failure-injection ELF cross-builds as a PS5 x86-64 PIE with the current
+OpenAGC package. Hardware execution of this new matrix still requires an
+explicitly available console.
 
 The local backend-absent artifact can be reproduced with:
 
