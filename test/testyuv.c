@@ -259,7 +259,9 @@ int main(int argc, char **argv)
     int max_frames = 0;
     SDL_bool bare_frame = SDL_FALSE;
     SDL_bool clear_only = SDL_FALSE;
+    SDL_bool display_probe = SDL_FALSE;
     SDL_bool target_probe = SDL_FALSE;
+    SDL_bool probe_failed = SDL_FALSE;
     int pitch;
     Uint8 *raw_yuv;
     Uint32 then, now, i, iterations = 100;
@@ -310,6 +312,9 @@ int main(int argc, char **argv)
             bare_frame = SDL_TRUE;
         } else if (SDL_strcmp(argv[arg], "--clear-only") == 0) {
             clear_only = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--display-probe") == 0) {
+            clear_only = SDL_TRUE;
+            display_probe = SDL_TRUE;
         } else if (SDL_strcmp(argv[arg], "--target-probe") == 0) {
             clear_only = SDL_TRUE;
             target_probe = SDL_TRUE;
@@ -323,10 +328,13 @@ int main(int argc, char **argv)
             }
             max_frames = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--target-probe|--target-texture-probe] [--frames count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe] [--frames count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
+    }
+    if (display_probe && max_frames == 0) {
+        max_frames = 1;
     }
 
     /* Run automated tests */
@@ -503,9 +511,15 @@ int main(int argc, char **argv)
                                          &probe, sizeof(probe)) == 0) {
                     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                                 "GPU center pixel: 0x%08" SDL_PRIx32 "\n", probe);
+                    if (display_probe && probe != 0xff0000ffu) {
+                        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                     "VideoOut readback mismatch: expected 0xff0000ff\n");
+                        probe_failed = SDL_TRUE;
+                    }
                 } else {
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "GPU center readback failed: %s\n", SDL_GetError());
+                    probe_failed = display_probe;
                 }
             }
             SDL_RenderPresent(renderer);
@@ -516,7 +530,7 @@ int main(int argc, char **argv)
         }
     }
     SDL_Quit();
-    return 0;
+    return probe_failed ? 6 : 0;
 }
 
 /* vi: set ts=4 sw=4 expandtab: */

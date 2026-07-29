@@ -140,9 +140,21 @@ mapped allocation and fault the GPU. Render-target descriptors likewise use
 the pitch-derived padded surface width while SDL's viewport and scissor retain
 the logical texture dimensions. `testyuv` accepts `--hardware` to select its
 native-YUV page, `--frames N` for a bounded hardware run, `--bare` to omit the
-clear and text overlay, `--target-probe` to validate an untextured clear, and
+clear and text overlay, `--display-probe` to require an exact opaque-red
+VideoOut readback, `--target-probe` to validate an untextured clear, and
 `--target-texture-probe` to validate texture sampling and readback through an
 ABGR8888 render target.
+
+The scanout path keeps three flexible-memory GPU render surfaces separate from
+the three write-combined direct-memory buffers registered with VideoOut. Before
+a flip or display readback, SDL performs a bounded render-target-to-host
+transition, invalidates the completed flexible surface, copies it to the
+matching registered buffer, and publishes the direct-memory range. Display
+readback is then sourced from that actual registered buffer. This follows the
+hardware-qualified OpenAGC cube/graphics presentation model and avoids using a
+write-combined scanout allocation as a GPU render target. SDL deliberately does
+not use `agcGfx1013CopyBuffer` for scanout until OpenAGC qualifies that transfer
+across flexible and direct memory on hardware.
 
 The Prospero build and link validation covers SDL itself plus `testgeometry`,
 `testrendercopyex`, and `testrendertarget`. On firmware 5.50 hardware,
@@ -159,7 +171,8 @@ read back `0xff0000ff` after a red clear, `0xffe8e9e7` after sampling the
 ABGR8888 test image, and `0xffe8e8e6` after sampling its native YV12/JPEG
 conversion. These results validate render-target clear, packed texture color,
 native YUV color within expected rounding, and target readback. Direct
-VideoOut/display-surface readback remains to be validated separately.
+VideoOut/display-surface readback uses the same exact-color probe and remains
+to be revalidated after the scanout separation change.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and

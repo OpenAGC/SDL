@@ -90,8 +90,11 @@ typedef struct PS5AGC_RenderData
     AgcGpuMemory upload_memory;
     AgcGpuMemory shader_memory;
     AgcGpuMemory fence_memory;
+    AgcGpuMemory render_memory;
     AgcGpuMemory display_memory;
+    void *render_buffers[PS5AGC_BUFFER_COUNT];
     void *display_buffers[PS5AGC_BUFFER_COUNT];
+    size_t render_stride;
     size_t display_stride;
     AgcShaderRecord front_record;
     AgcShaderRecord back_record;
@@ -99,6 +102,7 @@ typedef struct PS5AGC_RenderData
     AgcShaderRecord fused_record;
     AgcRegisterValue fused_registers[32];
     AgcGfx1013Wave32VsPsState shaders[PS5AGC_SHADER_COUNT];
+    AgcGfx1013ResourceUsage render_usage[PS5AGC_BUFFER_COUNT];
     AgcGfx1013ResourceUsage display_usage[PS5AGC_BUFFER_COUNT];
     Uint64 frame_id;
     Uint32 fence_value;
@@ -106,6 +110,7 @@ typedef struct PS5AGC_RenderData
     SDL_Rect cliprect;
     SDL_bool clip_enabled;
     SDL_bool screen_dirty;
+    SDL_bool screen_synced;
 } PS5AGC_RenderData;
 
 static size_t PS5AGC_Align(size_t value, size_t alignment)
@@ -916,10 +921,10 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
         (PS5AGC_TextureData *)renderer->target->driverdata : NULL;
     const Uint32 display_index = (Uint32)(data->frame_id % PS5AGC_BUFFER_COUNT);
     AgcGfx1013ResourceUsage *target_usage = target_texture ?
-        &target_texture->usage : &data->display_usage[display_index];
+        &target_texture->usage : &data->render_usage[display_index];
     const Uint64 target_address = target_texture ?
         target_texture->memory.gpu_address :
-        data->display_memory.gpu_address + (size_t)display_index * data->display_stride;
+        data->render_memory.gpu_address + (size_t)display_index * data->render_stride;
     const int width = target_texture ? renderer->target->w : (int)data->mode.width;
     const int height = target_texture ? renderer->target->h : (int)data->mode.height;
     const Uint32 surface_width = target_texture ?
@@ -1058,7 +1063,47 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
     }
     if (!target_texture) {
         data->screen_dirty = SDL_TRUE;
+        data->screen_synced = SDL_FALSE;
     }
+    return 0;
+}
+
+static int PS5AGC_SyncDisplayBuffer(PS5AGC_RenderData *data, Uint32 index)
+{
+    const size_t frame_bytes = (size_t)data->mode.width * data->mode.height * 4u;
+    const size_t render_offset = (size_t)index * data->render_stride;
+    const size_t display_offset = (size_t)index * data->display_stride;
+    SceAgcCb cb;
+    int32_t error;
+
+    if (data->screen_synced) {
+        return 0;
+    }
+    if (data->render_usage[index] != AGC_GFX1013_RESOURCE_USAGE_HOST_READ) {
+        agcCbInit(&cb, data->command_memory.cpu_address, PS5AGC_COMMAND_BYTES);
+        if (PS5AGC_Transition(&cb, data->render_usage[index],
+                              AGC_GFX1013_RESOURCE_USAGE_HOST_READ) < 0) {
+            return -1;
+        }
+        data->render_usage[index] = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
+        if (PS5AGC_SubmitAndWait(data, &cb,
+                                 "submitting an OpenAGC scanout transition") < 0) {
+            return -1;
+        }
+    }
+    error = agcGpuMemoryInvalidate(&data->render_memory,
+                                   render_offset, frame_bytes);
+    if (error != AGC_OK) {
+        return PS5AGC_SetError("invalidating the OpenAGC scanout source", error);
+    }
+    SDL_memcpy(data->display_buffers[index], data->render_buffers[index],
+               frame_bytes);
+    if (PS5AGC_Flush(&data->display_memory, display_offset, frame_bytes,
+                     "publishing the OpenAGC VideoOut buffer") < 0) {
+        return -1;
+    }
+    data->display_usage[index] = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
+    data->screen_synced = SDL_TRUE;
     return 0;
 }
 
@@ -1070,8 +1115,6 @@ static int PS5AGC_RenderReadPixels(SDL_Renderer *renderer,
     PS5AGC_TextureData *texture = renderer->target ?
         (PS5AGC_TextureData *)renderer->target->driverdata : NULL;
     const Uint32 index = (Uint32)(data->frame_id % PS5AGC_BUFFER_COUNT);
-    AgcGfx1013ResourceUsage *usage = texture ?
-        &texture->usage : &data->display_usage[index];
     AgcGpuMemory *memory = texture ? &texture->memory : &data->display_memory;
     const size_t display_offset = texture ? 0u : (size_t)index * data->display_stride;
     const int source_pitch = texture ? texture->pitch : (int)data->mode.width * 4;
@@ -1080,14 +1123,18 @@ static int PS5AGC_RenderReadPixels(SDL_Renderer *renderer,
     SceAgcCb cb;
     int32_t error;
 
-    agcCbInit(&cb, data->command_memory.cpu_address, PS5AGC_COMMAND_BYTES);
-    if (PS5AGC_Transition(&cb, *usage,
-                          AGC_GFX1013_RESOURCE_USAGE_HOST_READ) < 0) {
-        return -1;
-    }
-    *usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
-    if (PS5AGC_SubmitAndWait(data, &cb,
-                             "submitting an OpenAGC readback transition") < 0) {
+    if (texture) {
+        agcCbInit(&cb, data->command_memory.cpu_address, PS5AGC_COMMAND_BYTES);
+        if (PS5AGC_Transition(&cb, texture->usage,
+                              AGC_GFX1013_RESOURCE_USAGE_HOST_READ) < 0) {
+            return -1;
+        }
+        texture->usage = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
+        if (PS5AGC_SubmitAndWait(data, &cb,
+                                 "submitting an OpenAGC readback transition") < 0) {
+            return -1;
+        }
+    } else if (PS5AGC_SyncDisplayBuffer(data, index) < 0) {
         return -1;
     }
     error = agcGpuMemoryInvalidate(memory,
@@ -1117,6 +1164,9 @@ static int PS5AGC_Present(SDL_Renderer *renderer)
     if (!data->screen_dirty) {
         return 0;
     }
+    if (PS5AGC_SyncDisplayBuffer(data, index) < 0) {
+        return -1;
+    }
     agcCbInit(&cb, data->command_memory.cpu_address, PS5AGC_COMMAND_BYTES);
     if (PS5AGC_Transition(&cb, data->display_usage[index],
                           AGC_GFX1013_RESOURCE_USAGE_PRESENT) < 0) {
@@ -1133,6 +1183,7 @@ static int PS5AGC_Present(SDL_Renderer *renderer)
     }
     ++data->frame_id;
     data->screen_dirty = SDL_FALSE;
+    data->screen_synced = SDL_FALSE;
     return 0;
 }
 
@@ -1157,6 +1208,7 @@ static void PS5AGC_DestroyData(PS5AGC_RenderData *data)
         agcVideoOutClose(data->video_out);
     }
     agcGpuMemoryFreeDirect(&data->display_memory);
+    agcGpuMemoryFreeFlexible(&data->render_memory);
     agcGpuMemoryFreeFlexible(&data->fence_memory);
     agcGpuMemoryFreeFlexible(&data->shader_memory);
     agcGpuMemoryFreeFlexible(&data->upload_memory);
@@ -1250,15 +1302,31 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
     if (PS5AGC_InitShaders(data) < 0) {
         goto fail;
     }
+    data->render_stride = PS5AGC_Align(frame_bytes, 256u);
     data->display_stride = PS5AGC_Align(frame_bytes, PS5AGC_DIRECT_ALIGNMENT);
+    if (data->render_stride > SIZE_MAX / PS5AGC_BUFFER_COUNT ||
+        data->display_stride > SIZE_MAX / PS5AGC_BUFFER_COUNT) {
+        SDL_SetError("OpenAGC display allocation is too large");
+        goto fail;
+    }
+    error = agcGpuMemoryAllocateFlexible(&data->render_memory,
+        data->render_stride * PS5AGC_BUFFER_COUNT, 256u,
+        "SDL ps5agc scanout render targets");
+    if (error != AGC_OK) {
+        PS5AGC_SetError("allocating OpenAGC scanout render targets", error);
+        goto fail;
+    }
     if (PS5AGC_AllocateVideoMemory(
             &data->display_memory,
             data->display_stride * PS5AGC_BUFFER_COUNT) < 0) {
         goto fail;
     }
     for (i = 0; i < PS5AGC_BUFFER_COUNT; ++i) {
+        data->render_buffers[i] = (Uint8 *)data->render_memory.cpu_address +
+                                  (size_t)i * data->render_stride;
         data->display_buffers[i] = (Uint8 *)data->display_memory.cpu_address +
                                    (size_t)i * data->display_stride;
+        data->render_usage[i] = AGC_GFX1013_RESOURCE_USAGE_UNDEFINED;
         data->display_usage[i] = AGC_GFX1013_RESOURCE_USAGE_UNDEFINED;
     }
     SDL_zero(video_info);
