@@ -524,6 +524,8 @@ relocatable `sdl2-config` script.
 The current local baseline also completes full Prospero test builds with
 OpenAGC enabled and disabled, passes all 17 host CTests, passes the 32-cycle
 software texture-churn control, and parses every guarded PS5 qualification
-runner with `sh -n`. These checks validate builds and test orchestration only;
-the guarded WebSrv renderer and stress matrices still require an explicitly
-available PS5.
+runner with `sh -n`. Qualification counts and timeouts accept canonical
+positive decimal integers only; zero and zero-prefixed values are rejected
+before a build, upload, or WebSrv launch. These checks validate builds and test
+orchestration only; the guarded WebSrv renderer and stress matrices still
+require an explicitly available PS5.

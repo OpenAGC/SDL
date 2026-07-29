@@ -53,25 +53,25 @@ if [ -z "$expected_renderer" ]; then
 fi
 
 case "$websrv_timeout" in
-    ''|*[!0-9]*|0)
+    ''|*[!0-9]*|0*)
         echo "SDL_PS5AGC_WEBSRV_TIMEOUT must be a positive integer" >&2
         exit 2
         ;;
 esac
 case "$probe_frames" in
-    ''|*[!0-9]*|0)
+    ''|*[!0-9]*|0*)
         echo "SDL_PS5AGC_PROBE_FRAMES must be a positive integer" >&2
         exit 2
         ;;
 esac
 case "$recreate_count" in
-    ''|*[!0-9]*|0)
+    ''|*[!0-9]*|0*)
         echo "SDL_PS5AGC_RECREATE_COUNT must be a positive integer" >&2
         exit 2
         ;;
 esac
 case "$texture_churn_count" in
-    ''|*[!0-9]*|0)
+    ''|*[!0-9]*|0*)
         echo "SDL_PS5AGC_TEXTURE_CHURN_COUNT must be a positive integer" >&2
         exit 2
         ;;
@@ -167,7 +167,7 @@ case "$skip_build" in
         ;;
 esac
 case "$build_jobs" in
-    ''|*[!0-9]*|0)
+    ''|*[!0-9]*|0*)
         echo "SDL_PS5AGC_BUILD_JOBS must be a positive integer" >&2
         exit 2
         ;;

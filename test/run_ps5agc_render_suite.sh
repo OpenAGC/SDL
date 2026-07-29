@@ -10,7 +10,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 export SDL_PS5AGC_PROBE_RENDERER SDL_PS5AGC_EXPECT_RENDERER
 
 case "$SDL_PS5AGC_SUITE_FRAMES" in
-    ''|*[!0-9]*|0)
+    ''|*[!0-9]*|0*)
         echo "SDL_PS5AGC_SUITE_FRAMES must be a positive integer" >&2
         exit 2
         ;;

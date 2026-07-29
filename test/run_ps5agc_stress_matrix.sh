@@ -15,7 +15,7 @@ validate_positive() {
     name=$1
     value=$2
     case "$value" in
-        ''|*[!0-9]*|0)
+        ''|*[!0-9]*|0*)
             echo "$name must be a positive integer" >&2
             exit 2
             ;;
