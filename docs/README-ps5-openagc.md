@@ -434,5 +434,9 @@ self-termination path; returning from a raw WebSrv-loaded ELF can otherwise
 fall through its entry trampoline and raise a post-test page fault.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
-`sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and
-`SceAgcDriver` after SDL's existing platform dependencies.
+`sdl2.pc` and `sdl2-config` include `SDL2main` for PS5's required
+SystemService entry/exit wrapper, followed by the SDL archive and its platform
+dependencies. Their static link flags also include `openagc`, `kernel`, and
+`SceAgcDriver`. A Release OpenAGC-enabled install was validated by linking PS5
+PIE consumers through the installed CMake targets, `sdl2.pc`, and the
+relocatable `sdl2-config` script.
