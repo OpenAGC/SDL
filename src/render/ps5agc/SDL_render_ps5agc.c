@@ -43,7 +43,7 @@
 #define PS5AGC_PRESENT_TIMEOUT_US 1000000u
 #define PS5AGC_DIRECT_ALIGNMENT (2u * 1024u * 1024u)
 #define PS5AGC_RENDER_ALIGNMENT (64u * 1024u)
-#define PS5AGC_RENDERER_POOL_BYTES (25u * 1024u * 1024u)
+#define PS5AGC_MIN_RENDERER_POOL_BYTES (25u * 1024u * 1024u)
 #define PS5AGC_DRAW_MODIFIER 0x40000000u
 #define PS5AGC_TEST_FAILURE_ENV "SDL_PS5AGC_TEST_FAILURE"
 
@@ -1478,6 +1478,8 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
         goto fail;
     }
     if (!data->mode.width || !data->mode.height ||
+        data->mode.width > (Uint32)(SDL_MAX_SINT32 / 4) ||
+        data->mode.height > (Uint32)SDL_MAX_SINT32 ||
         (size_t)data->mode.width > SIZE_MAX / 4u / data->mode.height) {
         SDL_SetError("OpenAGC returned an invalid default display mode");
         goto fail;
@@ -1544,11 +1546,14 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
             goto fail;
         }
     }
-    if (renderer_bytes > PS5AGC_RENDERER_POOL_BYTES) {
-        SDL_SetError("OpenAGC renderer layout exceeds the qualified 25 MiB pool");
+    if (renderer_bytes > SIZE_MAX - (PS5AGC_RENDER_ALIGNMENT - 1u)) {
+        SDL_OutOfMemory();
         goto fail;
     }
-    renderer_bytes = PS5AGC_RENDERER_POOL_BYTES;
+    renderer_bytes = PS5AGC_Align(renderer_bytes, PS5AGC_RENDER_ALIGNMENT);
+    if (renderer_bytes < PS5AGC_MIN_RENDERER_POOL_BYTES) {
+        renderer_bytes = PS5AGC_MIN_RENDERER_POOL_BYTES;
+    }
     if (PS5AGC_InjectFailure("allocation") < 0) {
         goto fail;
     }

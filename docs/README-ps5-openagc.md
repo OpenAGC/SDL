@@ -174,14 +174,22 @@ surface exactly.
 The scanout path keeps three disjoint flexible-memory GPU render surfaces
 separate from the three write-combined direct-memory buffers registered with
 VideoOut. The shaders and three slot-local groups of render surface, command
-buffer, and fence are suballocated from one fixed 25 MiB flexible-memory
-mapping, with every render target starting on a 64 KiB boundary. Each slot has
-its own 256 KiB DCB and monotonically increasing fence value, so recording a
-later frame cannot overwrite an in-flight slot. The frequently rewritten
-4 MiB vertex/index upload arena uses public direct write-combined memory so its
+buffer, and fence are suballocated from one mode-sized flexible-memory mapping,
+with every render target starting on a 64 KiB boundary. The validated 1080p
+layout retains a 25 MiB minimum mapping; larger OpenAGC default modes grow the
+mapping from their reported dimensions instead of being rejected by an SDL
+resolution ceiling. Whether that larger allocation is supported remains an
+OpenAGC decision, and its public allocation error flows through normal renderer
+fallback. Each slot has its own 256 KiB DCB and monotonically increasing fence
+value, so recording a later frame cannot overwrite an in-flight slot. The
+frequently rewritten 4 MiB vertex/index upload arena uses public direct
+write-combined memory so its
 cache traffic stays outside the command/render mapping. This follows OpenAGC's
 hardware-qualified cube layout and avoids exhausting the FW 5.50 per-process
 system-flexible mapping capacity before the first 8,294,400-byte 1080p target.
+Consequently, a 3840x2160 default mode is no longer rejected by a hard-coded
+SDL pool limit, but 4K remains unqualified until OpenAGC exposes it on accepted
+hardware and the guarded renderer suite passes at that mode.
 Before a flip or display readback, SDL transitions the completed surface to copy
 source and the matching registered buffer to copy destination, records
 `agcGfx1013CopyBuffer`, transitions the destination for host readback, and
