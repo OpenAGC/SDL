@@ -1001,11 +1001,13 @@ SDL_Renderer *SDL_CreateRenderer(SDL_Window *window, int index, Uint32 flags)
                     break;
                 }
             }
-#ifdef SDL_VIDEO_RENDER_PS5AGC
             if (!renderer && SDL_strcasecmp(hint, "ps5agc") == 0) {
+                /* An explicit hardware request must never become software. */
+                if (index == n) {
+                    SDL_SetError("ps5agc renderer is not available");
+                }
                 goto error;
             }
-#endif
         }
 
         if (!renderer) {

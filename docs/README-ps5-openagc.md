@@ -114,7 +114,13 @@ cmake --build build-ps5
 
 The repository helper accepts the same choice through the
 `SDL_PS5_OPENAGC` environment variable. Its default is `OFF`, preserving
-generic SDK builds.
+generic SDK builds. An explicit `SDL_HINT_RENDER_DRIVER=ps5agc` request is
+strict even in those builds: when the renderer was not compiled, creation
+fails with `ps5agc renderer is not available` instead of silently selecting
+software. Automatic creation can still select software normally. The
+dummy-video `testps5agcselection` regression verifies both outcomes and proves
+that the failed explicit request does not retain renderer ownership of the
+window.
 
 The native renderer now consumes SDL's common geometry expansion for fills,
 copies, rotated copies, and indexed geometry, packs position/UV/color vertices,
