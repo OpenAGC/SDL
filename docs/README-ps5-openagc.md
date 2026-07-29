@@ -297,16 +297,26 @@ is `build-ps5-no-openagc/test/testyuv`; its CMake cache must report
 `SDL_PS5_OPENAGC:BOOL=OFF` and `SDL_TESTS:BOOL=ON`. Its hash intentionally is
 not pinned because every SDL source commit rebuilds a different test ELF.
 
-`test/run_ps5agc_render_suite.sh` runs SDL's automated `Render` suite with the
-renderer explicitly pinned to `ps5agc`. The automation harness propagates its
-`--renderer` argument to suite-created renderers and logs their actual driver,
-so a pass cannot silently come from the software fallback. The runner requires
-all four enabled render tests to pass, rejects fatal, reset, and power events,
-and applies the same exact-process lifecycle checks as the display probe. Set
+`test/run_ps5agc_render_suite.sh` first runs SDL's automated `Render` suite,
+then launches `testgeometry`, `testrendertarget`, `testscale`, `testsprite2`,
+and `testrendercopyex` as five separate bounded applications. The renderer is
+explicitly pinned to `ps5agc`. The automation harness propagates its
+`--renderer` argument to suite-created renderers and logs their actual driver;
+the standalone applications use `--info render`, and their oracle requires
+`ps5agc` under `Current renderer`. A pass therefore cannot silently come from
+the software fallback. The runner requires all four enabled automation tests
+to pass and each standalone application to reach its exact frame limit. Every
+launch independently rejects fatal, reset, and power events and applies the
+same exact-process lifecycle checks as the display probe. Set
 `SDL_PS5AGC_AUTOMATION_FILTER` to one `render_test*` name to isolate a failing
-case.
+automation case. `SDL_PS5AGC_SUITE_FRAMES` controls each standalone run and
+defaults to three frames, exercising every presentation slot once;
+`SDL_PS5AGC_SUITE_STANDALONE_TARGETS` can select a space-separated subset of
+the five allowlisted programs.
 
-The standalone renderer programs can also be run locally with `--frames N`.
+The standalone renderer programs can also be run locally with `--frames N`, or
+individually through the guarded launcher by setting
+`SDL_PS5AGC_PROBE_KIND=standalone` and `SDL_PS5AGC_STANDALONE_TARGET`.
 Host software-renderer smoke tests complete two bounded frames for all five
 programs, including textured indexed geometry in `testgeometry` and
 `testsprite2`; the same sources cross-build as PS5 PIE executables with

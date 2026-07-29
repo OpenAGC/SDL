@@ -8,9 +8,13 @@ repo_dir=$(dirname -- "$script_dir")
 build_dir=${SDL_PS5AGC_BUILD_DIR:-$repo_dir/build-ps5agc-native2}
 probe_kind=${SDL_PS5AGC_PROBE_KIND:-display}
 automation_filter=${SDL_PS5AGC_AUTOMATION_FILTER:-Render}
+standalone_target=${SDL_PS5AGC_STANDALONE_TARGET:-}
 if [ "$probe_kind" = automation ]; then
     probe_target=testautomation
     default_elf=$build_dir/test/testautomation
+elif [ "$probe_kind" = standalone ]; then
+    probe_target=$standalone_target
+    default_elf=$build_dir/test/$standalone_target
 else
     probe_target=testyuv
     default_elf=$build_dir/test/testyuv
@@ -88,12 +92,21 @@ case "$expected_renderer" in
         ;;
 esac
 case "$probe_kind" in
-    automation|blend|churn|display|packed|recreate|target|yuv) ;;
+    automation|blend|churn|display|packed|recreate|standalone|target|yuv) ;;
     *)
-        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, churn, display, packed, recreate, target, or yuv" >&2
+        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, churn, display, packed, recreate, standalone, target, or yuv" >&2
         exit 2
         ;;
 esac
+if [ "$probe_kind" = standalone ]; then
+    case "$standalone_target" in
+        testgeometry|testrendercopyex|testrendertarget|testscale|testsprite2) ;;
+        *)
+            echo "SDL_PS5AGC_STANDALONE_TARGET must name one supported renderer test" >&2
+            exit 2
+            ;;
+    esac
+fi
 case "$automation_filter" in
     ''|*[!A-Za-z0-9_]* )
         echo "SDL_PS5AGC_AUTOMATION_FILTER must be a suite or test name" >&2
@@ -121,6 +134,10 @@ case "$probe_accelerated" in
         exit 2
         ;;
 esac
+if [ "$probe_kind" = standalone ] && [ "$probe_accelerated" -ne 0 ]; then
+    echo "SDL_PS5AGC_PROBE_ACCELERATED is not supported by standalone tests" >&2
+    exit 2
+fi
 case "$expect_failure" in
     0|1) ;;
     *)
@@ -150,15 +167,27 @@ if [ "$skip_build" -eq 0 ] && [ "$elf" = "$default_elf" ]; then
         echo "cmake is required to rebuild the default probe ELF" >&2
         exit 2
     fi
-    cmake --build "$build_dir" --target "$probe_target" -j "$build_jobs"
+    if [ "$probe_kind" = standalone ]; then
+        cmake --build "$build_dir" --target "$probe_target" copy-sdl-test-resources -j "$build_jobs"
+    else
+        cmake --build "$build_dir" --target "$probe_target" -j "$build_jobs"
+    fi
 fi
 if [ ! -f "$elf" ]; then
     echo "missing probe ELF: $elf" >&2
     exit 2
 fi
-if [ "$probe_kind" != automation ] && [ ! -f "$bmp" ]; then
+if [ "$probe_kind" != automation ] && [ "$probe_kind" != standalone ] && [ ! -f "$bmp" ]; then
     echo "missing testyuv BMP: $bmp" >&2
     exit 2
+fi
+if [ "$probe_kind" = standalone ]; then
+    for resource in icon.bmp sample.bmp; do
+        if [ ! -f "$build_dir/test/$resource" ]; then
+            echo "missing standalone test resource: $build_dir/test/$resource" >&2
+            exit 2
+        fi
+    done
 fi
 if [ ! -d "$pyps4debug_dir" ] || [ ! -f "$killer" ] ||
    ! command -v curl >/dev/null 2>&1 ||
@@ -212,7 +241,12 @@ curl -sS --connect-timeout 3 --max-time 10 \
     "ftp://${PS5_HOST}:2121/" --quote "MKD $remote_dir" >/dev/null 2>&1 || true
 curl -sS --connect-timeout 3 --max-time 30 -T "$elf" \
     "ftp://${PS5_HOST}:2121${remote_dir}/eboot.elf"
-if [ "$probe_kind" != automation ]; then
+if [ "$probe_kind" = standalone ]; then
+    for resource in icon.bmp sample.bmp; do
+        curl -sS --connect-timeout 3 --max-time 30 -T "$build_dir/test/$resource" \
+            "ftp://${PS5_HOST}:2121${remote_dir}/$resource"
+    done
+elif [ "$probe_kind" != automation ]; then
     curl -sS --connect-timeout 3 --max-time 30 -T "$bmp" \
         "ftp://${PS5_HOST}:2121${remote_dir}/testyuv.bmp"
 fi
@@ -226,6 +260,18 @@ target_klog=$log_dir/${timestamp}-display-probe-target.klog
 launch_status=0
 if [ "$probe_kind" = automation ]; then
     probe_args="--filter ${automation_filter}"
+elif [ "$probe_kind" = standalone ]; then
+    case "$standalone_target" in
+        testgeometry)
+            probe_args="--frames ${probe_frames} --info render --use-texture"
+            ;;
+        testsprite2)
+            probe_args="--frames ${probe_frames} --info render --iterations ${probe_frames} --use-rendergeometry mode2"
+            ;;
+        *)
+            probe_args="--frames ${probe_frames} --info render"
+            ;;
+    esac
 elif [ "$probe_kind" = yuv ]; then
     probe_args="--yuv-update-probe --${yuv_format} --${yuv_mode}"
 elif [ "$probe_kind" = packed ]; then
@@ -241,7 +287,7 @@ elif [ "$probe_kind" = recreate ]; then
 else
     probe_args=--display-probe
 fi
-if [ "$probe_kind" = automation ]; then
+if [ "$probe_kind" = automation ] || [ "$probe_kind" = standalone ]; then
     launch_args=$probe_args
     if [ "$probe_renderer" != auto ]; then
         launch_args="${probe_args} --renderer ${probe_renderer}"
@@ -329,6 +375,16 @@ else
              ! grep -F 'Run Summary: Total=1 Passed=1 Failed=0 Skipped=0' "$log" >/dev/null; then
             oracle_failed=1
         fi
+    elif [ "$probe_kind" = standalone ]; then
+        if ! grep -F "Frame limit reached: ${probe_frames}" "$log" >/dev/null ||
+           ! awk -v expected="$expected_renderer" '
+               /Current renderer:/ { current = 1; next }
+               current && index($0, "Renderer " expected ":") { found = 1; exit }
+               current && /Renderer [^:]*:/ { exit }
+               END { exit(found ? 0 : 1) }
+           ' "$log"; then
+            oracle_failed=1
+        fi
     elif [ "$probe_kind" = yuv ]; then
         if ! grep -F 'YUV update probe: PASS' "$log" >/dev/null ||
            ! grep -F 'YUV odd update rect=1,1 553x331 pitches=' "$log" >/dev/null ||
@@ -366,7 +422,7 @@ else
          grep -E 'VideoOut readback mismatch|GPU center readback failed' "$log" >/dev/null; then
         oracle_failed=1
     fi
-    if [ "$probe_kind" != automation ] &&
+    if [ "$probe_kind" != automation ] && [ "$probe_kind" != standalone ] &&
        ! grep -F "Renderer selected: ${expected_renderer}" "$log" >/dev/null; then
         oracle_failed=1
     fi
@@ -406,6 +462,8 @@ if [ "$expect_failure" -eq 1 ]; then
 else
     if [ "$probe_kind" = automation ]; then
         echo "ps5agc display probe: PASS kind=automation filter=$automation_filter requested=$probe_renderer selected=$expected_renderer pid=$target_pid"
+    elif [ "$probe_kind" = standalone ]; then
+        echo "ps5agc display probe: PASS kind=standalone target=$standalone_target requested=$probe_renderer selected=$expected_renderer frames=$probe_frames pid=$target_pid"
     elif [ "$probe_kind" = yuv ]; then
         echo "ps5agc display probe: PASS kind=yuv format=$yuv_format mode=$yuv_mode requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
     elif [ "$probe_kind" = packed ]; then
