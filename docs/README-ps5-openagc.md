@@ -198,13 +198,14 @@ OpenAGC/openagc-psbc revisions. On firmware 5.50, a CPU-seeded 555x333 target
 read back `0xff0000ff` after a red clear, `0xffe8e9e7` after sampling the
 ABGR8888 test image, and `0xffe8e8e6` after sampling its native YV12/JPEG
 conversion. These results validate render-target clear, packed texture color,
-native YUV color within expected rounding, and target readback. Direct
-VideoOut/display-surface readback was subsequently hardware-qualified with the
-same exact-color probe: firmware 5.50 returned `0xff0000ff` from the registered
-scanout buffer after the red clear. A subsequent 180-frame bounded run retained
-the exact oracle while cycling all three flexible render targets, GPU copies,
-direct VideoOut buffers, fences, and presentations without a fatal event, GPU
-reset, or stale process.
+native YUV color within expected rounding, and target readback. Screen readback
+now transitions and reads the current flexible render target before the
+separate scanout copy. The display probe queries the actual renderer output
+extent and samples its center; using the 320x240 source-image center had sampled
+outside the rendered area while OpenAGC's legacy viewport forced a centered
+square. It checks every requested frame instead of only frame zero. A
+three-frame firmware 5.50 run returned exact `0xff0000ff` on all three render
+slots with bounded fences, copies, presentations, and a clean process exit.
 
 `test/run_ps5agc_display_probe.sh` performs that qualification as a bounded
 WebSrv launch. It uses ps5debug-NG to remove and reject stale
@@ -215,7 +216,11 @@ confirms WebSrv remains reachable.
 Fatal/reset and power-event checks run before any pixel or test-result oracle,
 so a test can never be reported as an ordinary color mismatch after its GPU
 submission has already destabilized the shell.
-Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it. Set
+Set `PS5_HOST` and optionally `SDL_PS5AGC_BUILD_DIR` before running it. The
+runner rebuilds its default `testautomation` or `testyuv` target before upload,
+preventing a stale ELF from invalidating a hardware diagnosis. Set
+`SDL_PS5AGC_SKIP_BUILD=1` only when intentionally testing an already-built ELF;
+`SDL_PS5AGC_BUILD_JOBS` controls build parallelism. Set
 `SDL_PS5AGC_PROBE_FRAMES` to a positive value for triple-buffer stress; the
 default remains one frame. `SDL_PS5AGC_PROBE_RENDERER=auto` omits the renderer
 hint so default selection can be checked, with `SDL_PS5AGC_EXPECT_RENDERER`
@@ -237,25 +242,29 @@ case.
 ### Current hardware status
 
 The renderer is still experimental and must not yet be used as the default in
-shipping applications. On 2026-07-29, the current SDL/OpenAGC/openagc-psbc
-worktrees repeatedly failed the first accelerated clear in the isolated
-`render_testPrimitives` run on firmware 5.50. The target-only kernel log reports
-PFP bad opcode `0xc0001700`, a CPG write to unmapped GPU VA
-`0x0000c00000000000`, a stuck graphics queue, and a subsequent GFX reset. A
-one-frame standalone OpenAGC cube built against the same installed
-`libopenagc.a` completed its fence and exited without that fault, localizing the
-remaining defect to SDL's first recorded draw/state sequence rather than
-OpenAGC initialization or the console generally.
+shipping applications. Two upstream OpenAGC defects found through SDL hardware
+qualification were fixed on 2026-07-29. The first was an invalid buffer-copy
+packet that produced a PFP bad opcode, low-VA write, stuck graphics queue, and
+GFX reset; OpenAGC commit `c569d73` replaces it with the validated seven-dword
+gfx1013 `DMA_DATA` stream. The second was the legacy viewport helper's use of
+`min(width,height)` for X scale, which forced 1920x1080 rendering into a
+centered 1080x1080 square with 420-pixel side bars. OpenAGC commit `db91d2a`
+maps NDC across the complete requested width and height.
 
-The same failure persisted after individually matching the cube's VideoOut
-initialization order, opaque blend omission, BGRA8 UNORM target format, and
-initial HOST_READ-to-render-target acquire. All shader states pass OpenAGC's
-public validator, and the submitted SDL DCB does not itself contain
-`0xc0001700`; do not describe any of those eliminated differences as the root
-cause. The guarded runner removes the target process and fails immediately on
-this signature, but that containment is not a renderer fix. Hardware
-qualification remains blocked on identifying the command-stream overrun or
-state packet that makes the command processor fetch the bad opcode.
+With both fixes linked, firmware 5.50 passes the isolated
+`render_testPrimitives` test: all 30 assertions, including exact zero-tolerance
+pixel comparison, pass with `ps5agc` explicitly selected. The guarded run
+exited through SystemService with no fatal event, GPU reset, power event, or
+stale process. A red-clear probe also returns exact `0xff0000ff` from all three
+render slots.
+
+The complete enabled Render suite now reaches every test safely. Renderer-count
+and primitive tests pass; packed-texture `render_testBlit` and
+`render_testBlitColor` remain failed. The first blit mismatch reads transparent
+black where the reference is opaque yellow, which localizes the next correction
+to sampled texture state or data rather than viewport geometry or readback.
+Target textures, texture modulation/blending, the native YUV matrix, and longer
+recreation/submission stress remain subsequent qualification gates.
 
 ### Recovering a stale WebSrv application
 

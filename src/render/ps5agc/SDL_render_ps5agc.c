@@ -1008,7 +1008,7 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
     const Uint32 surface_width = target_texture ?
         (Uint32)(target_texture->pitch / 4) : (Uint32)width;
     const AgcGfx1013ColorTargetFormat format = target_texture ?
-        AGC_GFX1013_RT_FORMAT_RGBA8_UNORM : AGC_GFX1013_RT_FORMAT_BGRA8_SRGB;
+        AGC_GFX1013_RT_FORMAT_RGBA8_UNORM : AGC_GFX1013_RT_FORMAT_BGRA8_UNORM;
     AgcGfx1013FrameState frame;
     AgcGfx1013GraphicsDefaultStats stats;
     SceAgcCb cb;
@@ -1194,8 +1194,8 @@ static int PS5AGC_RenderReadPixels(SDL_Renderer *renderer,
     PS5AGC_TextureData *texture = renderer->target ?
         (PS5AGC_TextureData *)renderer->target->driverdata : NULL;
     const Uint32 index = (Uint32)(data->frame_id % PS5AGC_BUFFER_COUNT);
-    AgcGpuMemory *memory = texture ? &texture->memory : &data->display_memory;
-    const size_t display_offset = texture ? 0u : (size_t)index * data->display_stride;
+    AgcGpuMemory *memory = texture ? &texture->memory : &data->render_memory[index];
+    const size_t display_offset = 0u;
     const int source_pitch = texture ? texture->pitch : (int)data->mode.width * 4;
     Uint8 *source = (Uint8 *)memory->cpu_address + display_offset +
         rect->y * source_pitch + rect->x * 4;
@@ -1214,8 +1214,18 @@ static int PS5AGC_RenderReadPixels(SDL_Renderer *renderer,
                                  "submitting an OpenAGC readback transition") < 0) {
             return -1;
         }
-    } else if (PS5AGC_SyncDisplayBuffer(data, index) < 0) {
-        return -1;
+    } else {
+        agcCbInit(&cb, data->command_memory[index].cpu_address,
+                  PS5AGC_COMMAND_BYTES);
+        if (PS5AGC_Transition(&cb, data->render_usage[index],
+                              AGC_GFX1013_RESOURCE_USAGE_HOST_READ) < 0) {
+            return -1;
+        }
+        data->render_usage[index] = AGC_GFX1013_RESOURCE_USAGE_HOST_READ;
+        if (PS5AGC_SubmitAndWait(data, index, &cb,
+                                 "submitting an OpenAGC screen readback transition") < 0) {
+            return -1;
+        }
     }
     error = agcGpuMemoryInvalidate(memory,
         display_offset + (size_t)rect->y * source_pitch,

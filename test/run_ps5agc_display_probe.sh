@@ -9,8 +9,10 @@ build_dir=${SDL_PS5AGC_BUILD_DIR:-$repo_dir/build-ps5agc-native2}
 probe_kind=${SDL_PS5AGC_PROBE_KIND:-display}
 automation_filter=${SDL_PS5AGC_AUTOMATION_FILTER:-Render}
 if [ "$probe_kind" = automation ]; then
+    probe_target=testautomation
     default_elf=$build_dir/test/testautomation
 else
+    probe_target=testyuv
     default_elf=$build_dir/test/testyuv
 fi
 elf=${SDL_PS5AGC_PROBE_ELF:-$default_elf}
@@ -24,6 +26,8 @@ yuv_mode=${SDL_PS5AGC_YUV_MODE:-jpeg}
 probe_accelerated=${SDL_PS5AGC_PROBE_ACCELERATED:-0}
 expect_failure=${SDL_PS5AGC_EXPECT_FAILURE:-0}
 expected_error=${SDL_PS5AGC_EXPECT_ERROR:-}
+skip_build=${SDL_PS5AGC_SKIP_BUILD:-0}
+build_jobs=${SDL_PS5AGC_BUILD_JOBS:-4}
 klog_port=${SDL_PS5AGC_KLOG_PORT:-3232}
 pyps4debug_dir=${PYPS4DEBUG_DIR:-/Users/bizkut/Downloads/PS5/homebrew/PyPS4debug}
 killer=${PS5DEBUG_KILLER:-$repo_dir/../Vulkan-PS5/examples/ps5debug_kill_process.py}
@@ -104,9 +108,29 @@ case "$expect_failure" in
         exit 2
         ;;
 esac
+case "$skip_build" in
+    0|1) ;;
+    *)
+        echo "SDL_PS5AGC_SKIP_BUILD must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+case "$build_jobs" in
+    ''|*[!0-9]*|0)
+        echo "SDL_PS5AGC_BUILD_JOBS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
 if [ "$expect_failure" -eq 1 ] && [ -z "$expected_error" ]; then
     echo "SDL_PS5AGC_EXPECT_ERROR is required for an expected failure" >&2
     exit 2
+fi
+if [ "$skip_build" -eq 0 ] && [ "$elf" = "$default_elf" ]; then
+    if ! command -v cmake >/dev/null 2>&1; then
+        echo "cmake is required to rebuild the default probe ELF" >&2
+        exit 2
+    fi
+    cmake --build "$build_dir" --target "$probe_target" -j "$build_jobs"
 fi
 if [ ! -f "$elf" ]; then
     echo "missing probe ELF: $elf" >&2

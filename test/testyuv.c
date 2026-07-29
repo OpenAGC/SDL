@@ -669,10 +669,16 @@ int main(int argc, char **argv)
                     SDLTest_DrawString(renderer, 4, 4, title);
                 }
             }
-            if (max_frames > 0 && frames == 0) {
-                const SDL_Rect probe_rect = { original->w / 2, original->h / 2, 1, 1 };
+            if (max_frames > 0) {
+                int probe_width = original->w;
+                int probe_height = original->h;
+                SDL_Rect probe_rect;
                 Uint32 probe = 0;
                 Uint32 expected_probe = 0;
+                if (display_probe) {
+                    (void)SDL_GetRendererOutputSize(renderer, &probe_width, &probe_height);
+                }
+                probe_rect = (SDL_Rect){ probe_width / 2, probe_height / 2, 1, 1 };
                 if (SDL_RenderReadPixels(renderer, &probe_rect,
                                          SDL_PIXELFORMAT_ABGR8888,
                                          &probe, sizeof(probe)) == 0) {
