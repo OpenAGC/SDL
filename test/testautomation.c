@@ -21,12 +21,12 @@
 
 static SDLTest_CommonState *state;
 
-/* Call this instead of exit(), so we can clean up SDL: atexit() is evil. */
-static void
+/* Clean up SDL and let the platform entry wrapper own process termination. */
+static int
 quit(int rc)
 {
     SDLTest_CommonQuit(state);
-    exit(rc);
+    return rc;
 }
 
 int main(int argc, char *argv[])
@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
         if (consumed < 0) {
             static const char *options[] = { "[--iterations #]", "[--execKey #]", "[--seed string]", "[--filter suite_name|test_name]", NULL };
             SDLTest_CommonLogUsage(state, argv[0], options);
-            quit(1);
+            return quit(1);
         }
 
         i += consumed;
@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
 
     /* Initialize common state */
     if (!SDLTest_CommonInit(state)) {
-        quit(2);
+        return quit(2);
     }
 
     /* Create the windows, initialize the renderers */
@@ -124,8 +124,7 @@ int main(int argc, char *argv[])
     SDL_free(filter);
 
     /* Shutdown everything */
-    quit(result);
-    return result;
+    return quit(result);
 }
 
 /* vi: set ts=4 sw=4 expandtab: */

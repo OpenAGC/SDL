@@ -219,6 +219,11 @@ these payloads as `eboot.elf` in the process list even though kernel EXEC lines
 refer to `/app0/eboot.bin`; qualification scripts therefore check both exact
 names.
 
+SDL's `testautomation` returns its result through the PS5 SDL2main wrapper
+instead of calling libc `exit()`. This is required even on assertion failure:
+returning lets SDL2main request `sceSystemServiceKillApp`, while `exit()` can
+leave the raw WebSrv application alive and owning a black screen.
+
 The guarded recovery payload already available in the adjacent Vulkan-PS5
 workspace is:
 

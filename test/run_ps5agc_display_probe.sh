@@ -141,6 +141,11 @@ assert_eboot_absent() {
         --assert-absent "$PS5_HOST" eboot.bin
 }
 
+remove_eboot() {
+    kill_eboot || true
+    assert_eboot_absent
+}
+
 latest_eboot_pid() {
     sed -n 's/^<\([0-9][0-9]*\)> EXEC \/app0\/eboot\.bin .*category=native_game.*/\1/p' \
         "$1" | tail -n 1
@@ -154,8 +159,7 @@ sanitize_klog() {
 
 # A stale native-game process makes VideoOut ownership and klog attribution
 # ambiguous. Kill it before uploading, then prove it is absent.
-kill_eboot || true
-assert_eboot_absent
+remove_eboot
 
 curl -sS --connect-timeout 3 --max-time 10 \
     "ftp://${PS5_HOST}:2121/" --quote "MKD $remote_dir" >/dev/null 2>&1 || true
@@ -210,7 +214,7 @@ if [ -s "$klog" ]; then
 fi
 
 if [ "$launch_status" -ne 0 ]; then
-    kill_eboot || true
+    remove_eboot
     sed -n '1,160p' "$log" >&2
     echo "display probe launch failed with curl status $launch_status; log: $log" >&2
     exit 1
@@ -219,7 +223,7 @@ sed -n '1,160p' "$log"
 if [ "$expect_failure" -eq 1 ]; then
     if ! grep -F -- "$expected_error" "$log" >/dev/null ||
        grep -F 'GPU center pixel:' "$log" >/dev/null; then
-        kill_eboot || true
+        remove_eboot
         echo "display probe did not produce the expected failure; log: $log" >&2
         exit 1
     fi
@@ -255,18 +259,20 @@ else
         oracle_failed=1
     fi
     if [ "$oracle_failed" -ne 0 ]; then
-        kill_eboot || true
+        remove_eboot
         echo "display probe did not produce the expected renderer and readback oracle; log: $log" >&2
         exit 1
     fi
 fi
 if [ ! -s "$klog" ]; then
+    remove_eboot
     echo "display probe passed but klog capture failed: $klog" >&2
     exit 1
 fi
 
 target_pid=$(latest_eboot_pid "$klog")
 if [ -z "$target_pid" ]; then
+    remove_eboot
     echo "klog did not identify the display probe PID: $klog" >&2
     exit 1
 fi
@@ -281,7 +287,7 @@ if grep -Eq \
     "$target_klog" ||
    grep -Eq 'PowerManager\.RequestStateChange state:(Reboot|Shutdown)|Start SystemReboot|Start SystemShutdown' \
     "$target_klog"; then
-    kill_eboot || true
+    remove_eboot
     echo "display probe hit a fatal, GPU-reset, or system power event: $target_klog" >&2
     exit 1
 fi
@@ -291,7 +297,7 @@ all_exited_line=$(grep -n '\[AppMgr\] All processes exited' "$target_klog" |
     tail -n 1 | cut -d: -f1 || true)
 if [ -z "$self_kill_line" ] || [ -z "$all_exited_line" ] ||
    [ "$all_exited_line" -le "$self_kill_line" ]; then
-    kill_eboot || true
+    remove_eboot
     echo "display probe lifecycle evidence is incomplete: $target_klog" >&2
     exit 1
 fi
@@ -299,6 +305,7 @@ warning='[KERNEL] WARNING: VM resource leak: set:1, res:0, amount:0x4000'
 warning_count=$(grep -Fxc "$warning" "$target_klog" || true)
 if grep -F '[KERNEL] WARNING:' "$target_klog" | grep -Fvx "$warning" \
     >/dev/null || [ "$warning_count" -gt 1 ]; then
+    remove_eboot
     echo "display probe produced an unexpected kernel warning: $target_klog" >&2
     exit 1
 fi
