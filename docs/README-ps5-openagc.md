@@ -312,6 +312,20 @@ The failure-injection ELF cross-builds as a PS5 x86-64 PIE with the current
 OpenAGC package. Hardware execution of this new matrix still requires an
 explicitly available console.
 
+`test/run_ps5agc_stress_matrix.sh` is the bounded soak entry point. Its default
+phases are 180 explicitly accelerated display frames, 128 complete streaming
+and target-texture churn cycles, 16 renderer destruction/recreation cycles,
+and 30 frames in each of the five standalone renderer programs after the
+automated Render suite. Each phase is a separate guarded WebSrv launch (and
+each standalone program is isolated again), so stale ownership or teardown
+failure stops the matrix before another application starts. Override the
+positive limits with `SDL_PS5AGC_STRESS_FRAMES`,
+`SDL_PS5AGC_STRESS_CHURN` (capped at 1,000),
+`SDL_PS5AGC_STRESS_RECREATE`, and `SDL_PS5AGC_STRESS_SUITE_FRAMES`.
+The final PASS line is emitted only after every pixel, renderer, bounded-fence,
+fatal/reset, power, lifecycle, kernel-warning, and WebSrv-health oracle has
+passed.
+
 The local backend-absent artifact can be reproduced with:
 
 ```sh
