@@ -26,6 +26,7 @@
 
 #include "shaders/ps5agc_ngg_front.h"
 #include "shaders/ps5agc_ngg_back.h"
+#include "shaders/ps5agc_solid.h"
 #include "shaders/ps5agc_frag.h"
 #include "shaders/ps5agc_yuv_planar_jpeg.h"
 #include "shaders/ps5agc_yuv_planar_bt601.h"
@@ -41,11 +42,11 @@
 #define PS5AGC_GPU_TIMEOUT_US 1000000u
 #define PS5AGC_PRESENT_TIMEOUT_US 1000000u
 #define PS5AGC_DIRECT_ALIGNMENT (2u * 1024u * 1024u)
-#define PS5AGC_MAIN_DIRECT_ALIGNMENT (128u * 1024u)
 #define PS5AGC_DRAW_MODIFIER 0x40000000u
 
 typedef enum PS5AGC_ShaderKind
 {
+    PS5AGC_SHADER_SOLID,
     PS5AGC_SHADER_RGBA,
     PS5AGC_SHADER_PLANAR_JPEG,
     PS5AGC_SHADER_PLANAR_BT601,
@@ -89,11 +90,9 @@ typedef struct PS5AGC_RenderData
     AgcGpuMemory upload_memory;
     AgcGpuMemory shader_memory;
     AgcGpuMemory fence_memory;
-    AgcGpuMemory white_memory;
     AgcGpuMemory display_memory;
     void *display_buffers[PS5AGC_BUFFER_COUNT];
     size_t display_stride;
-    AgcGfx1013CombinedImageSamplerDescriptor *white_descriptor;
     AgcShaderRecord front_record;
     AgcShaderRecord back_record;
     AgcShaderRecord pixel_records[PS5AGC_SHADER_COUNT];
@@ -259,6 +258,11 @@ static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
                                               ps5agc_ngg_back_sb_len);
     }
     if (error == AGC_OK) {
+        error = agcShaderRecordRelocateBinary(&data->pixel_records[PS5AGC_SHADER_SOLID],
+                                              ps5agc_solid_sb,
+                                              ps5agc_solid_sb_len);
+    }
+    if (error == AGC_OK) {
         error = agcShaderRecordRelocateBinary(&data->pixel_records[PS5AGC_SHADER_RGBA],
                                               ps5agc_frag_sb,
                                               ps5agc_frag_sb_len);
@@ -301,6 +305,8 @@ static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
     back_offset = front_offset;
     PS5AGC_UPLOAD_SHADER(ps5agc_ngg_back_sb, data->back_record, back_offset);
     shader_offset = back_offset;
+    PS5AGC_UPLOAD_SHADER(ps5agc_solid_sb,
+        data->pixel_records[PS5AGC_SHADER_SOLID], shader_offset);
     PS5AGC_UPLOAD_SHADER(ps5agc_frag_sb,
         data->pixel_records[PS5AGC_SHADER_RGBA], shader_offset);
     PS5AGC_UPLOAD_SHADER(ps5agc_yuv_planar_jpeg_sb,
@@ -320,6 +326,11 @@ static int PS5AGC_InitShaders(PS5AGC_RenderData *data)
     if (shader_offset > data->shader_memory.size) {
         return SDL_SetError("checked-in PSBC shaders exceed the OpenAGC shader pool");
     }
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin___clear_cache(
+        (char *)data->shader_memory.cpu_address,
+        (char *)data->shader_memory.cpu_address + shader_offset);
+#endif
     if (PS5AGC_Flush(&data->shader_memory, 0, shader_offset,
                      "publishing checked-in PSBC shaders") < 0) {
         return -1;
@@ -798,7 +809,10 @@ static PS5AGC_ShaderKind PS5AGC_SelectShader(SDL_Texture *texture)
     SDL_YUV_CONVERSION_MODE mode;
     SDL_bool nv;
 
-    if (!texture || texture->format == SDL_PIXELFORMAT_ABGR8888) {
+    if (!texture) {
+        return PS5AGC_SHADER_SOLID;
+    }
+    if (texture->format == SDL_PIXELFORMAT_ABGR8888) {
         return PS5AGC_SHADER_RGBA;
     }
     nv = texture->format == SDL_PIXELFORMAT_NV12 ||
@@ -859,15 +873,14 @@ static int PS5AGC_RecordDraw(PS5AGC_RenderData *data, SceAgcCb *cb,
     primitive_table.address = data->upload_memory.gpu_address + descriptor_offset;
     pixel_table.placeholder = OPENAGC_DESCRIPTOR_SET_PLACEHOLDER(0u);
     pixel_table.address = texture_data ?
-        texture_data->memory.gpu_address + texture_data->descriptor_offset :
-        data->white_memory.gpu_address + 256u;
+        texture_data->memory.gpu_address + texture_data->descriptor_offset : 0u;
     SDL_zero(draw);
     draw.shaders = data->shaders[PS5AGC_SelectShader(texture)];
     draw.frame = frame;
     draw.primitive_resource_tables = &primitive_table;
     draw.num_primitive_resource_tables = 1u;
-    draw.pixel_resource_tables = &pixel_table;
-    draw.num_pixel_resource_tables = 1u;
+    draw.pixel_resource_tables = texture_data ? &pixel_table : NULL;
+    draw.num_pixel_resource_tables = texture_data ? 1u : 0u;
     draw.index_type = kAgcIndexSize16;
     draw.instance_count = 1u;
     draw.vertex_count = (Uint32)count;
@@ -909,6 +922,8 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
         data->display_memory.gpu_address + (size_t)display_index * data->display_stride;
     const int width = target_texture ? renderer->target->w : (int)data->mode.width;
     const int height = target_texture ? renderer->target->h : (int)data->mode.height;
+    const Uint32 surface_width = target_texture ?
+        (Uint32)(target_texture->pitch / 4) : (Uint32)width;
     const AgcGfx1013ColorTargetFormat format = target_texture ?
         AGC_GFX1013_RT_FORMAT_RGBA8_UNORM : AGC_GFX1013_RT_FORMAT_BGRA8_SRGB;
     AgcGfx1013FrameState frame;
@@ -929,7 +944,7 @@ static int PS5AGC_RunCommandQueue(SDL_Renderer *renderer,
     *target_usage = AGC_GFX1013_RESOURCE_USAGE_RENDER_TARGET;
     SDL_zero(frame);
     error = agcGfx1013InitColorTarget(&frame.color_target, target_address,
-                                      (Uint32)width, (Uint32)height, format);
+                                      surface_width, (Uint32)height, format);
     if (error != AGC_OK) {
         return PS5AGC_SetError("initializing an OpenAGC color target", error);
     }
@@ -1142,7 +1157,6 @@ static void PS5AGC_DestroyData(PS5AGC_RenderData *data)
         agcVideoOutClose(data->video_out);
     }
     agcGpuMemoryFreeDirect(&data->display_memory);
-    agcGpuMemoryFreeFlexible(&data->white_memory);
     agcGpuMemoryFreeFlexible(&data->fence_memory);
     agcGpuMemoryFreeFlexible(&data->shader_memory);
     agcGpuMemoryFreeFlexible(&data->upload_memory);
@@ -1157,59 +1171,12 @@ static void PS5AGC_DestroyRenderer(SDL_Renderer *renderer)
     SDL_free(renderer);
 }
 
-static int PS5AGC_InitWhiteTexture(PS5AGC_RenderData *data)
-{
-    PS5AGC_TextureData white;
-    Uint32 *pixel;
-    const size_t descriptor_offset = 256u;
-    int32_t error;
-    SDL_zero(white);
-    error = agcGpuMemoryAllocateFlexible(
-        &data->white_memory,
-        descriptor_offset + sizeof(AgcGfx1013CombinedImageSamplerDescriptor),
-        256u, "SDL ps5agc white texture");
-    if (error != AGC_OK) {
-        return PS5AGC_SetError("allocating the OpenAGC white texture", error);
-    }
-    pixel = (Uint32 *)data->white_memory.cpu_address;
-    *pixel = 0xffffffffu;
-    data->white_descriptor = (AgcGfx1013CombinedImageSamplerDescriptor *)
-        ((Uint8 *)data->white_memory.cpu_address + descriptor_offset);
-    white.memory = data->white_memory;
-    white.descriptor = data->white_descriptor;
-    white.descriptor_offset = descriptor_offset;
-    white.format = SDL_PIXELFORMAT_ABGR8888;
-    white.plane_count = 1u;
-    white.scale_mode = SDL_ScaleModeNearest;
-    if (PS5AGC_InitDescriptor(&white, 1, 1) < 0) {
-        return -1;
-    }
-    return PS5AGC_Flush(&data->white_memory, 0, data->white_memory.size,
-                        "publishing the OpenAGC white texture");
-}
-
 static int PS5AGC_AllocateVideoMemory(AgcGpuMemory *memory, size_t size)
 {
-    intptr_t physical = 0;
-    void *address = NULL;
-
-    SDL_zero(*memory);
-    if (sceKernelAllocateMainDirectMemory(size, PS5AGC_MAIN_DIRECT_ALIGNMENT, 3,
-                                          &physical) != 0) {
-        return SDL_SetError("sceKernelAllocateMainDirectMemory failed");
-    }
-    if (sceKernelMapDirectMemory(&address, size, 0x33, 0, physical,
-                                 PS5AGC_DIRECT_ALIGNMENT) != 0 || !address) {
-        sceKernelReleaseDirectMemory(physical, size);
-        return SDL_SetError("sceKernelMapDirectMemory failed");
-    }
-    memory->cpu_address = address;
-    memory->gpu_address = (Uint64)(uintptr_t)address;
-    memory->size = size;
-    memory->mapped_size = size;
-    memory->physical_offset = physical;
-    memory->type = AGC_GPU_MEMORY_TYPE_DIRECT_WRITE_COMBINED;
-    return 0;
+    const int32_t error = agcGpuMemoryAllocateDirectWriteCombined(
+        memory, size, PS5AGC_DIRECT_ALIGNMENT);
+    return error == AGC_OK ? 0 :
+        PS5AGC_SetError("allocating OpenAGC VideoOut memory", error);
 }
 
 static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
@@ -1280,7 +1247,7 @@ static SDL_Renderer *PS5AGC_CreateRenderer(SDL_Window *window, Uint32 flags)
         PS5AGC_SetError("allocating OpenAGC renderer memory", error);
         goto fail;
     }
-    if (PS5AGC_InitShaders(data) < 0 || PS5AGC_InitWhiteTexture(data) < 0) {
+    if (PS5AGC_InitShaders(data) < 0) {
         goto fail;
     }
     data->display_stride = PS5AGC_Align(frame_bytes, PS5AGC_DIRECT_ALIGNMENT);

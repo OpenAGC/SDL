@@ -118,11 +118,13 @@ generic SDK builds.
 The native renderer now consumes SDL's common geometry expansion for fills,
 copies, rotated copies, and indexed geometry, packs position/UV/color vertices,
 and submits them with `agcGfx1013DrawBaselineIndexAuto`. Clears and points are
-also expanded to triangles. Viewports and clip rectangles become OpenAGC
-scissors, SDL blend modes become OpenAGC color-target blend state, render-target
-textures use flexible GPU-visible memory, and texture locks or updates publish
-only texture data. Readback invalidates and converts only the requested
-rectangle after a bounded GPU-to-host transition.
+also expanded to triangles. A dedicated solid fragment shader handles clears
+and untextured primitives without binding a synthetic sampled texture. Viewports
+and clip rectangles become OpenAGC scissors, SDL blend modes become OpenAGC
+color-target blend state, render-target textures use flexible GPU-visible
+memory, and texture locks or updates publish only texture data. Readback
+invalidates and converts only the requested rectangle after a bounded
+GPU-to-host transition.
 
 The checked-in Wave32 PSBC shaders are built from the GLSL files under
 `src/render/ps5agc/shaders/`. Application and SDK builds consume their
@@ -134,9 +136,13 @@ Linear texture storage uses 256-byte GPU row pitches for ABGR8888, R8, and
 RG8 planes while SDL lock buffers retain their tight application-facing
 pitches. This is required for gfx1013 linear-image fetches, including odd
 widths; allocating only the tight row size can make a texture fetch cross the
-mapped allocation and fault the GPU. `testyuv` accepts `--hardware` to select
-its native-YUV page, `--frames N` for a bounded hardware run, and `--bare` to
-omit the clear and text overlay when isolating a texture draw.
+mapped allocation and fault the GPU. Render-target descriptors likewise use
+the pitch-derived padded surface width while SDL's viewport and scissor retain
+the logical texture dimensions. `testyuv` accepts `--hardware` to select its
+native-YUV page, `--frames N` for a bounded hardware run, `--bare` to omit the
+clear and text overlay, `--target-probe` to validate an untextured clear, and
+`--target-texture-probe` to validate texture sampling and readback through an
+ABGR8888 render target.
 
 The Prospero build and link validation covers SDL itself plus `testgeometry`,
 `testrendercopyex`, and `testrendertarget`. On firmware 5.50 hardware,
@@ -148,10 +154,12 @@ Linking an OpenAGC consumer requires
 the SDK's `libSceAgcDriver` import stub, generated locally from a legally
 obtained firmware SPRX; the firmware binary is not distributed by SDL or
 OpenAGC. The YUV shaders and texture paths cross-build with the current
-OpenAGC/openagc-psbc revisions; their visual matrix/plane-order validation is
-still required on hardware accepted by OpenAGC. A bounded 555x333 YV12/JPEG
-run on firmware 5.50 now returns without a GPU protection fault or a stale
-process; color/readback validation remains outstanding.
+OpenAGC/openagc-psbc revisions. On firmware 5.50, a CPU-seeded 555x333 target
+read back `0xff0000ff` after a red clear, `0xffe8e9e7` after sampling the
+ABGR8888 test image, and `0xffe8e8e6` after sampling its native YV12/JPEG
+conversion. These results validate render-target clear, packed texture color,
+native YUV color within expected rounding, and target readback. Direct
+VideoOut/display-surface readback remains to be validated separately.
 
 Installed static CMake targets discover `OpenAGC::openagc` transitively.
 `sdl2.pc` and `sdl2-config --static-libs` also include `openagc`, `kernel`, and

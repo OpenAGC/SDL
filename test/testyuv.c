@@ -258,6 +258,8 @@ int main(int argc, char **argv)
     int current = 0;
     int max_frames = 0;
     SDL_bool bare_frame = SDL_FALSE;
+    SDL_bool clear_only = SDL_FALSE;
+    SDL_bool target_probe = SDL_FALSE;
     int pitch;
     Uint8 *raw_yuv;
     Uint32 then, now, i, iterations = 100;
@@ -306,6 +308,14 @@ int main(int argc, char **argv)
             current = 2;
         } else if (SDL_strcmp(argv[arg], "--bare") == 0) {
             bare_frame = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--clear-only") == 0) {
+            clear_only = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--target-probe") == 0) {
+            clear_only = SDL_TRUE;
+            target_probe = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--target-texture-probe") == 0) {
+            bare_frame = SDL_TRUE;
+            target_probe = SDL_TRUE;
         } else if (SDL_strcmp(argv[arg], "--frames") == 0) {
             if (!argv[arg + 1] || SDL_atoi(argv[arg + 1]) <= 0) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "--frames requires a positive frame count\n");
@@ -313,7 +323,7 @@ int main(int argc, char **argv)
             }
             max_frames = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare] [--frames count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--target-probe|--target-texture-probe] [--frames count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
@@ -377,6 +387,30 @@ int main(int argc, char **argv)
     if (!renderer) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't create renderer: %s\n", SDL_GetError());
         return 4;
+    }
+    if (target_probe) {
+        SDL_Texture *target;
+        Uint32 *seed;
+        size_t seed_count;
+        size_t seed_index;
+        target = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                                   SDL_TEXTUREACCESS_TARGET, original->w, original->h);
+        seed = (Uint32 *)SDL_malloc((size_t)original->w * original->h * sizeof(*seed));
+        seed_count = (size_t)original->w * original->h;
+        if (seed) {
+            for (seed_index = 0; seed_index < seed_count; ++seed_index) {
+                seed[seed_index] = 0xffff00ffu;
+            }
+        }
+        if (!target || !seed ||
+            SDL_UpdateTexture(target, NULL, seed, original->w * (int)sizeof(*seed)) < 0 ||
+            SDL_SetRenderTarget(renderer, target) < 0) {
+            SDL_free(seed);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "Couldn't create target probe: %s\n", SDL_GetError());
+            return 5;
+        }
+        SDL_free(seed);
     }
 
     output[0] = SDL_CreateTextureFromSurface(renderer, original);
@@ -443,11 +477,16 @@ int main(int argc, char **argv)
                 current -= SDL_arraysize(output);
             }
 
-            if (!bare_frame) {
+            if (clear_only) {
+                SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF);
+                SDL_RenderClear(renderer);
+            } else if (!bare_frame) {
                 SDL_RenderClear(renderer);
             }
-            SDL_RenderCopy(renderer, output[current], NULL, NULL);
-            if (!bare_frame) {
+            if (!clear_only) {
+                SDL_RenderCopy(renderer, output[current], NULL, NULL);
+            }
+            if (!bare_frame && !clear_only) {
                 SDL_SetRenderDrawColor(renderer, 0xFF, 0xFF, 0xFF, 0xFF);
                 if (current == 0) {
                     SDLTest_DrawString(renderer, 4, 4, titles[current]);
