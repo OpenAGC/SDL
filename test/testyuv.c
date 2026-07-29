@@ -390,6 +390,113 @@ static int ValidateRenderer(SDL_Renderer *renderer, const char *requested_render
     return 0;
 }
 
+static int RunTextureChurnProbe(SDL_Renderer *renderer, int count)
+{
+    const int texture_width = 64;
+    const int texture_height = 64;
+    SDL_Texture *source = NULL;
+    SDL_Texture *target = NULL;
+    void *locked_pixels;
+    int locked_pitch;
+    int output_width;
+    int output_height;
+    int iteration;
+    int x;
+    int y;
+    char error[256];
+
+    for (iteration = 0; iteration < count; ++iteration) {
+        const Uint8 red = (Uint8)((iteration * 37 + 17) & 0xff);
+        const Uint8 green = (Uint8)((iteration * 67 + 43) & 0xff);
+        const Uint8 blue = (Uint8)((iteration * 97 + 71) & 0xff);
+        const Uint32 expected = 0xff000000u | ((Uint32)blue << 16) |
+                                ((Uint32)green << 8) | red;
+        Uint32 target_pixel = 0;
+        Uint32 display_pixel = 0;
+        SDL_Rect target_rect = { texture_width / 2, texture_height / 2, 1, 1 };
+        SDL_Rect display_rect;
+
+        source = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                                   SDL_TEXTUREACCESS_STREAMING,
+                                   texture_width, texture_height);
+        target = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                                   SDL_TEXTUREACCESS_TARGET,
+                                   texture_width, texture_height);
+        if (!source || !target) {
+            goto failed;
+        }
+        if (SDL_LockTexture(source, NULL, &locked_pixels, &locked_pitch) < 0) {
+            goto failed;
+        }
+        for (y = 0; y < texture_height; ++y) {
+            Uint32 *row = (Uint32 *)((Uint8 *)locked_pixels + y * locked_pitch);
+            for (x = 0; x < texture_width; ++x) {
+                row[x] = 0xffffffffu;
+            }
+        }
+        SDL_UnlockTexture(source);
+        if (SDL_SetTextureColorMod(source, red, green, blue) < 0 ||
+            SDL_SetTextureAlphaMod(source, 0xff) < 0 ||
+            SDL_SetTextureBlendMode(source, SDL_BLENDMODE_NONE) < 0 ||
+            SDL_SetTextureBlendMode(target, SDL_BLENDMODE_NONE) < 0 ||
+            SDL_SetRenderTarget(renderer, target) < 0 ||
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xff) < 0 ||
+            SDL_RenderClear(renderer) < 0 ||
+            SDL_RenderCopy(renderer, source, NULL, NULL) < 0 ||
+            SDL_RenderReadPixels(renderer, &target_rect,
+                                 SDL_PIXELFORMAT_ABGR8888,
+                                 &target_pixel, sizeof(target_pixel)) < 0) {
+            goto failed;
+        }
+        if (!PixelsWithinTolerance(target_pixel, expected, 1)) {
+            SDL_SetError("target readback expected 0x%08" SDL_PRIx32
+                         " but received 0x%08" SDL_PRIx32,
+                         expected, target_pixel);
+            goto failed;
+        }
+        if (SDL_SetRenderTarget(renderer, NULL) < 0 ||
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xff) < 0 ||
+            SDL_RenderClear(renderer) < 0 ||
+            SDL_RenderCopy(renderer, target, NULL, NULL) < 0 ||
+            SDL_GetRendererOutputSize(renderer, &output_width, &output_height) < 0) {
+            goto failed;
+        }
+        display_rect = (SDL_Rect){ output_width / 2, output_height / 2, 1, 1 };
+        if (SDL_RenderReadPixels(renderer, &display_rect,
+                                 SDL_PIXELFORMAT_ABGR8888,
+                                 &display_pixel, sizeof(display_pixel)) < 0) {
+            goto failed;
+        }
+        if (!PixelsWithinTolerance(display_pixel, expected, 1)) {
+            SDL_SetError("display readback expected 0x%08" SDL_PRIx32
+                         " but received 0x%08" SDL_PRIx32,
+                         expected, display_pixel);
+            goto failed;
+        }
+        SDL_DestroyTexture(target);
+        SDL_DestroyTexture(source);
+        target = NULL;
+        source = NULL;
+    }
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Texture churn: PASS count=%d\n", count);
+    return 0;
+
+failed:
+    SDL_strlcpy(error, SDL_GetError(), sizeof(error));
+    (void)SDL_SetRenderTarget(renderer, NULL);
+    if (target) {
+        SDL_DestroyTexture(target);
+    }
+    if (source) {
+        SDL_DestroyTexture(source);
+    }
+    return SDL_SetError("texture churn iteration %d/%d failed: %s",
+                        iteration + 1, count,
+                        *error ? error : "unknown error");
+}
+
 int main(int argc, char **argv)
 {
     struct
@@ -448,6 +555,7 @@ int main(int argc, char **argv)
     Uint32 renderer_flags = 0;
     const char *requested_renderer = NULL;
     int recreate_count = 0;
+    int texture_churn_count = 0;
     int pitch;
     Uint8 *raw_yuv;
     Uint32 then, now, i, iterations = 100;
@@ -542,8 +650,16 @@ int main(int argc, char **argv)
                 return 1;
             }
             recreate_count = SDL_atoi(argv[++arg]);
+        } else if (SDL_strcmp(argv[arg], "--texture-churn") == 0) {
+            if (!argv[arg + 1] || SDL_atoi(argv[arg + 1]) <= 0 ||
+                SDL_atoi(argv[arg + 1]) > 1000) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "--texture-churn requires a count from 1 through 1000\n");
+                return 1;
+            }
+            texture_churn_count = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe|--packed-texture-probe|--blend-probe|--yuv-update-probe] [--renderer name] [--accelerated] [--frames count] [--recreate count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe|--packed-texture-probe|--blend-probe|--yuv-update-probe] [--renderer name] [--accelerated] [--frames count] [--recreate count] [--texture-churn count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
@@ -551,6 +667,11 @@ int main(int argc, char **argv)
     if (recreate_count > 0 && !display_probe) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "--recreate requires --display-probe\n");
+        return 1;
+    }
+    if (texture_churn_count > 0 && !display_probe) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "--texture-churn requires --display-probe\n");
         return 1;
     }
     if ((display_probe || target_texture_probe || packed_texture_probe || blend_probe ||
@@ -650,6 +771,12 @@ int main(int argc, char **argv)
         }
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Renderer recreation: PASS count=%d\n", recreate_count);
+    }
+    if (texture_churn_count > 0 &&
+        RunTextureChurnProbe(renderer, texture_churn_count) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Texture churn probe failed: %s\n", SDL_GetError());
+        return 5;
     }
     if (target_probe) {
         SDL_Texture *target;

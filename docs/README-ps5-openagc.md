@@ -254,6 +254,15 @@ return exact red from the display readback and present successfully. This is a
 bounded qualification of repeated driver shutdown/reinitialization and GPU
 allocation reuse; it is not run by default.
 
+Set `SDL_PS5AGC_PROBE_KIND=churn` for the bounded texture-lifetime stress
+probe. `SDL_PS5AGC_TEXTURE_CHURN_COUNT` defaults to 32 and is capped at 1,000.
+Each iteration allocates one streaming ABGR8888 texture and one target texture,
+fills the streaming texture through its reported lock pitch, applies a unique
+color modulation, and requires matching target and display readbacks within
+one unit per channel. Both textures are then destroyed before the next
+iteration. The final renderer instance must still return exact red and present
+cleanly through the normal guarded lifecycle.
+
 `test/run_ps5agc_selection_matrix.sh` runs four isolated supported-hardware
 selection cases through the same guarded launcher: explicit `ps5agc`, automatic
 selection, an unnamed accelerated request, and explicit software. If
@@ -279,8 +288,9 @@ SDL_PS5AGC_DISABLED_ELF=build-ps5-no-openagc/test/testyuv \
 
 `CMAKE_CXX_COMPILER_WORKS=1` only bypasses the SDK's unrelated C++ runtime
 link probe; SDL and this test executable are built as C. The current local ELF
-is `build-ps5-no-openagc/test/testyuv` with SHA-256
-`9ebacacf637b1c727af94de2baadf8e6df9e5bc17c62ebb6ec76010b523bb43d`.
+is `build-ps5-no-openagc/test/testyuv`; its CMake cache must report
+`SDL_PS5_OPENAGC:BOOL=OFF` and `SDL_TESTS:BOOL=ON`. Its hash intentionally is
+not pinned because every SDL source commit rebuilds a different test ELF.
 
 `test/run_ps5agc_render_suite.sh` runs SDL's automated `Render` suite with the
 renderer explicitly pinned to `ps5agc`. The automation harness propagates its

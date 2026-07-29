@@ -20,6 +20,7 @@ bmp=${SDL_PS5AGC_PROBE_BMP:-$build_dir/test/testyuv.bmp}
 websrv_timeout=${SDL_PS5AGC_WEBSRV_TIMEOUT:-30}
 probe_frames=${SDL_PS5AGC_PROBE_FRAMES:-1}
 recreate_count=${SDL_PS5AGC_RECREATE_COUNT:-8}
+texture_churn_count=${SDL_PS5AGC_TEXTURE_CHURN_COUNT:-32}
 probe_renderer=${SDL_PS5AGC_PROBE_RENDERER:-ps5agc}
 expected_renderer=${SDL_PS5AGC_EXPECT_RENDERER:-}
 yuv_format=${SDL_PS5AGC_YUV_FORMAT:-yv12}
@@ -61,6 +62,18 @@ case "$recreate_count" in
         exit 2
         ;;
 esac
+case "$texture_churn_count" in
+    ''|*[!0-9]*|0)
+        echo "SDL_PS5AGC_TEXTURE_CHURN_COUNT must be a positive integer" >&2
+        exit 2
+        ;;
+    *)
+        if [ "$texture_churn_count" -gt 1000 ]; then
+            echo "SDL_PS5AGC_TEXTURE_CHURN_COUNT must not exceed 1000" >&2
+            exit 2
+        fi
+        ;;
+esac
 case "$probe_renderer" in
     auto) ;;
     ''|*[!A-Za-z0-9_-]*)
@@ -75,9 +88,9 @@ case "$expected_renderer" in
         ;;
 esac
 case "$probe_kind" in
-    automation|blend|display|packed|recreate|target|yuv) ;;
+    automation|blend|churn|display|packed|recreate|target|yuv) ;;
     *)
-        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, display, packed, recreate, target, or yuv" >&2
+        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, churn, display, packed, recreate, target, or yuv" >&2
         exit 2
         ;;
 esac
@@ -221,6 +234,8 @@ elif [ "$probe_kind" = target ]; then
     probe_args=--target-texture-probe
 elif [ "$probe_kind" = blend ]; then
     probe_args=--blend-probe
+elif [ "$probe_kind" = churn ]; then
+    probe_args="--display-probe --texture-churn ${texture_churn_count}"
 elif [ "$probe_kind" = recreate ]; then
     probe_args="--display-probe --recreate ${recreate_count}"
 else
@@ -335,6 +350,12 @@ else
            grep -E 'Zero-alpha blend probe mismatch|GPU center readback failed' "$log" >/dev/null; then
             oracle_failed=1
         fi
+    elif [ "$probe_kind" = churn ]; then
+        if ! grep -F "Texture churn: PASS count=${texture_churn_count}" "$log" >/dev/null ||
+           ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
+           grep -E 'Texture churn probe failed|texture churn iteration|VideoOut readback mismatch|GPU center readback failed' "$log" >/dev/null; then
+            oracle_failed=1
+        fi
     elif [ "$probe_kind" = recreate ]; then
         if ! grep -F "Renderer recreation: PASS count=${recreate_count}" "$log" >/dev/null ||
            ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
@@ -393,6 +414,8 @@ else
         echo "ps5agc display probe: PASS kind=target requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
     elif [ "$probe_kind" = blend ]; then
         echo "ps5agc display probe: PASS kind=blend requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
+    elif [ "$probe_kind" = churn ]; then
+        echo "ps5agc display probe: PASS kind=churn count=$texture_churn_count requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
     elif [ "$probe_kind" = recreate ]; then
         echo "ps5agc display probe: PASS kind=recreate count=$recreate_count requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
     else
