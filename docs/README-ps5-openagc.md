@@ -197,7 +197,12 @@ that the failed launch no longer consumes additional quota. Flexible memory
 leaked by pre-0.2.0 processes remains allocated until the console is restarted.
 
 The Prospero build and link validation covers SDL itself plus `testgeometry`,
-`testrendercopyex`, and `testrendertarget`. On firmware 5.50 hardware,
+`testrendertarget`, `testscale`, `testsprite2`, and `testrendercopyex`. These five
+interactive renderer tests accept the common `--frames N` option and log
+`Frame limit reached: N` before exiting normally. This makes unattended WebSrv
+runs bounded instead of relying on an input event or an external process kill;
+zero, negative, malformed, and overflowing limits are rejected. On firmware
+5.50 hardware,
 `testgeometry` has also validated native 1920x1080 OpenAGC initialization,
 VideoOut registration, shader execution, indexed geometry, and presentation.
 The three scanout images occupy one aligned main-direct allocation so their
@@ -300,6 +305,13 @@ all four enabled render tests to pass, rejects fatal, reset, and power events,
 and applies the same exact-process lifecycle checks as the display probe. Set
 `SDL_PS5AGC_AUTOMATION_FILTER` to one `render_test*` name to isolate a failing
 case.
+
+The standalone renderer programs can also be run locally with `--frames N`.
+Host software-renderer smoke tests complete two bounded frames for all five
+programs, including textured indexed geometry in `testgeometry` and
+`testsprite2`; the same sources cross-build as PS5 PIE executables with
+OpenAGC enabled. Hardware launches remain gated by the guarded WebSrv runner
+and an explicitly available console.
 
 Three narrower `testyuv` gates separate display sampling, blending, and render
 targets without running the full Render suite. Set

@@ -38,7 +38,7 @@ static const char *video_usage[] = {
     "[--resizable]", "[--minimize]", "[--maximize]", "[--grab]", "[--keyboard-grab]",
     "[--shown]", "[--hidden]", "[--input-focus]", "[--mouse-focus]",
     "[--flash-on-focus-loss]", "[--allow-highdpi]", "[--confine-cursor X,Y,W,H]",
-    "[--usable-bounds]"
+    "[--usable-bounds]", "[--frames N]"
 };
 
 static const char *audio_usage[] = {
@@ -143,6 +143,21 @@ int SDLTest_CommonArg(SDLTest_CommonState *state, int index)
             return -1;
         }
         state->renderdriver = argv[index];
+        return 2;
+    }
+    if (SDL_strcasecmp(argv[index], "--frames") == 0) {
+        char *endp;
+        long value;
+
+        ++index;
+        if (!argv[index]) {
+            return -1;
+        }
+        value = SDL_strtol(argv[index], &endp, 10);
+        if (*argv[index] == '\0' || *endp != '\0' || value <= 0 || value > SDL_MAX_SINT32) {
+            return -1;
+        }
+        state->frame_limit = (int)value;
         return 2;
     }
     if (SDL_strcasecmp(argv[index], "--gldebug") == 0) {
@@ -657,6 +672,22 @@ SDL_bool SDLTest_CommonDefaultArgs(SDLTest_CommonState *state, const int argc, c
         i += consumed;
     }
     return SDL_TRUE;
+}
+
+SDL_bool SDLTest_CommonFrameLimitReached(SDLTest_CommonState *state)
+{
+    if (!state || state->frame_limit == 0) {
+        return SDL_FALSE;
+    }
+
+    ++state->frame_count;
+    if (state->frame_count >= state->frame_limit) {
+        if (state->frame_count == state->frame_limit) {
+            SDL_Log("Frame limit reached: %d", state->frame_limit);
+        }
+        return SDL_TRUE;
+    }
+    return SDL_FALSE;
 }
 
 static void SDLTest_PrintDisplayOrientation(char *text, size_t maxlen, SDL_DisplayOrientation orientation)

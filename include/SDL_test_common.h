@@ -119,6 +119,10 @@ typedef struct
     /* Additional fields added in 2.0.18 */
     SDL_Rect confine;
 
+    /* Optional limit for unattended rendering tests. Zero means unlimited. */
+    int frame_limit;
+    int frame_count;
+
 } SDLTest_CommonState;
 
 #include "begin_code.h"
@@ -196,6 +200,17 @@ SDL_bool SDLTest_CommonInit(SDLTest_CommonState * state);
  * \returns SDL_FALSE if app should quit, true otherwise.
  */
 SDL_bool SDLTest_CommonDefaultArgs(SDLTest_CommonState * state, const int argc, char **argv);
+
+/**
+ * \brief Advance the common frame counter and report whether its limit was reached.
+ *
+ * Tests using the common \c --frames option should call this once after each
+ * completed outer render loop.
+ *
+ * \param state The common state describing the test.
+ * \returns SDL_TRUE when the configured frame limit has been reached, false otherwise.
+ */
+SDL_bool SDLTest_CommonFrameLimitReached(SDLTest_CommonState * state);
 
 /**
  * \brief Common event handler for test windows.

@@ -103,6 +103,9 @@ void loop(void)
         }
         Draw(&drawstates[i]);
     }
+    if (SDLTest_CommonFrameLimitReached(state)) {
+        done = 1;
+    }
 #ifdef __EMSCRIPTEN__
     if (done) {
         emscripten_cancel_main_loop();

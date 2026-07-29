@@ -416,6 +416,10 @@ void loop(void)
 
     MoveAllSprites();
 
+    if (SDLTest_CommonFrameLimitReached(state)) {
+        done = 1;
+    }
+
 #ifdef __EMSCRIPTEN__
     if (done) {
         emscripten_cancel_main_loop();
