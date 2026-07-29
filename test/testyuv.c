@@ -211,6 +211,120 @@ done:
     return result;
 }
 
+static int UpdateTextureWithOddPitches(SDL_Texture *texture, Uint32 format,
+                                       const Uint8 *raw_yuv, int width, int height)
+{
+    const SDL_Rect rect = { 1, 1, width - 2, height - 2 };
+    const int full_chroma_width = (width + 1) / 2;
+    const int full_chroma_height = (height + 1) / 2;
+    const int chroma_width = (rect.w + 1) / 2;
+    const int chroma_height = (rect.h + 1) / 2;
+    const int y_pitch = rect.w + 7;
+    const int chroma_pitch = chroma_width + 5;
+    const int uv_pitch = chroma_width * 2 + 6;
+    const Uint8 *first_chroma;
+    Uint8 *y_plane = NULL;
+    Uint8 *u_plane = NULL;
+    Uint8 *v_plane = NULL;
+    Uint8 *uv_plane = NULL;
+    int result = -1;
+    int row;
+
+    if (width < 3 || height < 3) {
+        return SDL_SetError("YUV update probe requires at least a 3x3 image");
+    }
+    first_chroma = raw_yuv + (size_t)width * height;
+    y_plane = (Uint8 *)SDL_malloc((size_t)y_pitch * rect.h);
+    if (!y_plane) {
+        return SDL_OutOfMemory();
+    }
+    SDL_memset(y_plane, 0xa5, (size_t)y_pitch * rect.h);
+    for (row = 0; row < rect.h; ++row) {
+        SDL_memcpy(y_plane + (size_t)row * y_pitch,
+                   raw_yuv + (size_t)(rect.y + row) * width + rect.x,
+                   (size_t)rect.w);
+    }
+
+    if (format == SDL_PIXELFORMAT_NV12 || format == SDL_PIXELFORMAT_NV21) {
+        const int full_uv_pitch = full_chroma_width * 2;
+        uv_plane = (Uint8 *)SDL_malloc((size_t)uv_pitch * chroma_height);
+        if (!uv_plane) {
+            SDL_OutOfMemory();
+            goto done;
+        }
+        SDL_memset(uv_plane, 0x5a, (size_t)uv_pitch * chroma_height);
+        for (row = 0; row < chroma_height; ++row) {
+            SDL_memcpy(uv_plane + (size_t)row * uv_pitch,
+                       first_chroma +
+                           (size_t)(rect.y / 2 + row) * full_uv_pitch +
+                           (size_t)(rect.x / 2) * 2,
+                       (size_t)chroma_width * 2);
+        }
+        result = SDL_UpdateNVTexture(texture, &rect, y_plane, y_pitch,
+                                     uv_plane, uv_pitch);
+    } else {
+        const Uint8 *source_u;
+        const Uint8 *source_v;
+        const Uint8 *second_chroma = first_chroma +
+            (size_t)full_chroma_width * full_chroma_height;
+        if (format == SDL_PIXELFORMAT_YV12) {
+            source_v = first_chroma;
+            source_u = second_chroma;
+        } else {
+            source_u = first_chroma;
+            source_v = second_chroma;
+        }
+        u_plane = (Uint8 *)SDL_malloc((size_t)chroma_pitch * chroma_height);
+        v_plane = (Uint8 *)SDL_malloc((size_t)chroma_pitch * chroma_height);
+        if (!u_plane || !v_plane) {
+            SDL_OutOfMemory();
+            goto done;
+        }
+        SDL_memset(u_plane, 0x5a, (size_t)chroma_pitch * chroma_height);
+        SDL_memset(v_plane, 0xa5, (size_t)chroma_pitch * chroma_height);
+        for (row = 0; row < chroma_height; ++row) {
+            const size_t source_offset =
+                (size_t)(rect.y / 2 + row) * full_chroma_width +
+                (size_t)(rect.x / 2);
+            SDL_memcpy(u_plane + (size_t)row * chroma_pitch,
+                       source_u + source_offset, (size_t)chroma_width);
+            SDL_memcpy(v_plane + (size_t)row * chroma_pitch,
+                       source_v + source_offset, (size_t)chroma_width);
+        }
+        result = SDL_UpdateYUVTexture(texture, &rect, y_plane, y_pitch,
+                                      u_plane, chroma_pitch,
+                                      v_plane, chroma_pitch);
+    }
+
+    if (result == 0) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "YUV odd update rect=%d,%d %dx%d pitches=%d/%d\n",
+                    rect.x, rect.y, rect.w, rect.h, y_pitch,
+                    (format == SDL_PIXELFORMAT_NV12 ||
+                     format == SDL_PIXELFORMAT_NV21) ? uv_pitch : chroma_pitch);
+    }
+
+done:
+    SDL_free(uv_plane);
+    SDL_free(v_plane);
+    SDL_free(u_plane);
+    SDL_free(y_plane);
+    return result;
+}
+
+static SDL_bool PixelsWithinTolerance(Uint32 actual, Uint32 expected, Uint8 tolerance)
+{
+    int shift;
+    for (shift = 0; shift < 32; shift += 8) {
+        const int a = (int)((actual >> shift) & 0xffu);
+        const int e = (int)((expected >> shift) & 0xffu);
+        if (SDL_abs(a - e) > tolerance) {
+            return SDL_FALSE;
+        }
+    }
+    return SDL_TRUE;
+}
+
 int main(int argc, char **argv)
 {
     struct
@@ -261,6 +375,7 @@ int main(int argc, char **argv)
     SDL_bool clear_only = SDL_FALSE;
     SDL_bool display_probe = SDL_FALSE;
     SDL_bool target_probe = SDL_FALSE;
+    SDL_bool yuv_update_probe = SDL_FALSE;
     SDL_bool probe_failed = SDL_FALSE;
     Uint32 renderer_flags = 0;
     const char *requested_renderer = NULL;
@@ -323,6 +438,11 @@ int main(int argc, char **argv)
         } else if (SDL_strcmp(argv[arg], "--target-texture-probe") == 0) {
             bare_frame = SDL_TRUE;
             target_probe = SDL_TRUE;
+        } else if (SDL_strcmp(argv[arg], "--yuv-update-probe") == 0) {
+            bare_frame = SDL_TRUE;
+            target_probe = SDL_TRUE;
+            yuv_update_probe = SDL_TRUE;
+            current = 2;
         } else if (SDL_strcmp(argv[arg], "--renderer") == 0) {
             if (!argv[arg + 1] || !*argv[arg + 1]) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "--renderer requires a driver name\n");
@@ -338,7 +458,7 @@ int main(int argc, char **argv)
             }
             max_frames = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe] [--renderer name] [--accelerated] [--frames count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe|--yuv-update-probe] [--renderer name] [--accelerated] [--frames count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
@@ -462,7 +582,19 @@ int main(int argc, char **argv)
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't set create texture: %s\n", SDL_GetError());
         return 5;
     }
-    SDL_UpdateTexture(output[2], NULL, raw_yuv, pitch);
+    if (yuv_update_probe) {
+        if (UpdateTextureWithOddPitches(output[2], yuv_format, raw_yuv,
+                                        original->w, original->h) < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "Couldn't perform odd pitched YUV update: %s\n",
+                         SDL_GetError());
+            return 5;
+        }
+    } else if (SDL_UpdateTexture(output[2], NULL, raw_yuv, pitch) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Couldn't update YUV texture: %s\n", SDL_GetError());
+        return 5;
+    }
 
     yuv_name = SDL_GetPixelFormatName(yuv_format);
     if (SDL_strncmp(yuv_name, "SDL_PIXELFORMAT_", 16) == 0) {
@@ -540,6 +672,7 @@ int main(int argc, char **argv)
             if (max_frames > 0 && frames == 0) {
                 const SDL_Rect probe_rect = { original->w / 2, original->h / 2, 1, 1 };
                 Uint32 probe = 0;
+                Uint32 expected_probe = 0;
                 if (SDL_RenderReadPixels(renderer, &probe_rect,
                                          SDL_PIXELFORMAT_ABGR8888,
                                          &probe, sizeof(probe)) == 0) {
@@ -550,10 +683,38 @@ int main(int argc, char **argv)
                                      "VideoOut readback mismatch: expected 0xff0000ff\n");
                         probe_failed = SDL_TRUE;
                     }
+                    if (yuv_update_probe) {
+                        const Uint8 *expected_source =
+                            (const Uint8 *)converted->pixels +
+                            (size_t)(original->h / 2) * converted->pitch +
+                            (size_t)(original->w / 2) * converted->format->BytesPerPixel;
+                        if (SDL_ConvertPixels(1, 1,
+                                             converted->format->format,
+                                             expected_source, converted->pitch,
+                                             SDL_PIXELFORMAT_ABGR8888,
+                                             &expected_probe,
+                                             (int)sizeof(expected_probe)) < 0) {
+                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                         "CPU center conversion failed: %s\n",
+                                         SDL_GetError());
+                            probe_failed = SDL_TRUE;
+                        } else if (!PixelsWithinTolerance(probe, expected_probe, 3)) {
+                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                         "YUV update probe mismatch: expected 0x%08" SDL_PRIx32
+                                         " actual 0x%08" SDL_PRIx32 " tolerance=3\n",
+                                         expected_probe, probe);
+                            probe_failed = SDL_TRUE;
+                        } else {
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "YUV update probe: PASS expected=0x%08" SDL_PRIx32
+                                        " actual=0x%08" SDL_PRIx32 " tolerance=3\n",
+                                        expected_probe, probe);
+                        }
+                    }
                 } else {
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "GPU center readback failed: %s\n", SDL_GetError());
-                    probe_failed = display_probe;
+                    probe_failed = display_probe || yuv_update_probe;
                 }
             }
             SDL_RenderPresent(renderer);

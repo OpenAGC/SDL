@@ -296,7 +296,8 @@ int SDL_SW_UpdateNVTexturePlanar(SDL_SW_YUVTexture *swdata, const SDL_Rect *rect
     /* Copy the UV or VU plane */
     src = UVplane;
     dst = swdata->pixels + swdata->h * swdata->w;
-    dst += rect->y * ((swdata->w + 1) / 2) + rect->x;
+    dst += (rect->y / 2) * (2 * ((swdata->w + 1) / 2)) +
+           (rect->x / 2) * 2;
     length = (rect->w + 1) / 2;
     length *= 2;
     for (row = 0; row < (rect->h + 1) / 2; ++row) {

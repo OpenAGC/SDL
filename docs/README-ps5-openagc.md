@@ -201,6 +201,16 @@ accelerated capability without naming a driver. Expected creation failures can
 be qualified without weakening lifecycle checks by setting
 `SDL_PS5AGC_EXPECT_FAILURE=1` and the required fixed-string
 `SDL_PS5AGC_EXPECT_ERROR` oracle.
+
+`test/run_ps5agc_yuv_matrix.sh` runs 12 isolated WebSrv launches covering IYUV,
+YV12, NV12, and NV21 under JPEG, BT.601, and BT.709 conversion. Each launch
+updates the 555x333 streaming texture through an odd `1,1 553x331` rectangle
+using deliberately non-tight Y and chroma pitches, renders it into an ABGR8888
+target, and compares GPU center readback with SDL's CPU conversion within three
+units per channel. The matrix retains the display probe's stale-process,
+PID-scoped fatal/reset, power-transition, self-exit, and WebSrv health checks.
+SDL's software NV updater now derives interleaved-chroma offsets from `x/2` and
+`y/2`, matching its planar updater and the native renderer for odd rectangles.
 The firmware 5.50 qualification completed through `KillApp()` followed by
 `All processes exited`, with no app crash, fatal signal, GFX reset, or stale
 native-game process. PS5 executables use SDL2main's non-returning SystemService

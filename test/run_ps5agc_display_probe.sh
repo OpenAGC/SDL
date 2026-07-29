@@ -12,6 +12,9 @@ websrv_timeout=${SDL_PS5AGC_WEBSRV_TIMEOUT:-30}
 probe_frames=${SDL_PS5AGC_PROBE_FRAMES:-1}
 probe_renderer=${SDL_PS5AGC_PROBE_RENDERER:-ps5agc}
 expected_renderer=${SDL_PS5AGC_EXPECT_RENDERER:-}
+probe_kind=${SDL_PS5AGC_PROBE_KIND:-display}
+yuv_format=${SDL_PS5AGC_YUV_FORMAT:-yv12}
+yuv_mode=${SDL_PS5AGC_YUV_MODE:-jpeg}
 probe_accelerated=${SDL_PS5AGC_PROBE_ACCELERATED:-0}
 expect_failure=${SDL_PS5AGC_EXPECT_FAILURE:-0}
 expected_error=${SDL_PS5AGC_EXPECT_ERROR:-}
@@ -51,6 +54,27 @@ esac
 case "$expected_renderer" in
     ''|*[!A-Za-z0-9_-]*)
         echo "SDL_PS5AGC_EXPECT_RENDERER must be a renderer driver name" >&2
+        exit 2
+        ;;
+esac
+case "$probe_kind" in
+    display|yuv) ;;
+    *)
+        echo "SDL_PS5AGC_PROBE_KIND must be display or yuv" >&2
+        exit 2
+        ;;
+esac
+case "$yuv_format" in
+    iyuv|yv12|nv12|nv21) ;;
+    *)
+        echo "SDL_PS5AGC_YUV_FORMAT must be iyuv, yv12, nv12, or nv21" >&2
+        exit 2
+        ;;
+esac
+case "$yuv_mode" in
+    jpeg|bt601|bt709) ;;
+    *)
+        echo "SDL_PS5AGC_YUV_MODE must be jpeg, bt601, or bt709" >&2
         exit 2
         ;;
 esac
@@ -128,9 +152,14 @@ klog=$log_dir/${timestamp}-display-probe.klog
 target_klog=$log_dir/${timestamp}-display-probe-target.klog
 
 launch_status=0
-launch_args="--display-probe --frames ${probe_frames} ${remote_dir}/testyuv.bmp"
+if [ "$probe_kind" = yuv ]; then
+    probe_args="--yuv-update-probe --${yuv_format} --${yuv_mode}"
+else
+    probe_args=--display-probe
+fi
+launch_args="${probe_args} --frames ${probe_frames} ${remote_dir}/testyuv.bmp"
 if [ "$probe_renderer" != auto ]; then
-    launch_args="--display-probe --renderer ${probe_renderer} --frames ${probe_frames} ${remote_dir}/testyuv.bmp"
+    launch_args="${probe_args} --renderer ${probe_renderer} --frames ${probe_frames} ${remote_dir}/testyuv.bmp"
 fi
 if [ "$probe_accelerated" -eq 1 ]; then
     launch_args="--accelerated ${launch_args}"
@@ -165,9 +194,19 @@ if [ "$expect_failure" -eq 1 ]; then
         exit 1
     fi
 else
+    oracle_failed=0
+    if [ "$probe_kind" = yuv ]; then
+        if ! grep -F 'YUV update probe: PASS' "$log" >/dev/null ||
+           ! grep -F 'YUV odd update rect=1,1 553x331 pitches=' "$log" >/dev/null ||
+           grep -E 'YUV update probe mismatch|GPU center readback failed' "$log" >/dev/null; then
+            oracle_failed=1
+        fi
+    elif ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
+         grep -E 'VideoOut readback mismatch|GPU center readback failed' "$log" >/dev/null; then
+        oracle_failed=1
+    fi
     if ! grep -F "Renderer selected: ${expected_renderer}" "$log" >/dev/null ||
-       ! grep -F 'GPU center pixel: 0xff0000ff' "$log" >/dev/null ||
-       grep -E 'VideoOut readback mismatch|GPU center readback failed' "$log" >/dev/null; then
+       [ "$oracle_failed" -ne 0 ]; then
         kill_eboot || true
         echo "display probe did not produce the expected renderer and readback oracle; log: $log" >&2
         exit 1
@@ -225,7 +264,11 @@ fi
 if [ "$expect_failure" -eq 1 ]; then
     echo "ps5agc display probe: PASS expected-failure renderer=$probe_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
 else
-    echo "ps5agc display probe: PASS requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated pixel=0xff0000ff frames=$probe_frames pid=$target_pid"
+    if [ "$probe_kind" = yuv ]; then
+        echo "ps5agc display probe: PASS kind=yuv format=$yuv_format mode=$yuv_mode requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated frames=$probe_frames pid=$target_pid"
+    else
+        echo "ps5agc display probe: PASS kind=display requested=$probe_renderer selected=$expected_renderer accelerated=$probe_accelerated pixel=0xff0000ff frames=$probe_frames pid=$target_pid"
+    fi
 fi
 echo "log: $log"
 echo "klog: $target_klog"
