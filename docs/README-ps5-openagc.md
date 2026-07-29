@@ -148,14 +148,17 @@ Linear texture storage uses 256-byte GPU row pitches for ABGR8888, R8, and
 RG8 planes while SDL lock buffers retain their tight application-facing
 pitches. This is required for gfx1013 linear-image fetches, including odd
 widths; allocating only the tight row size can make a texture fetch cross the
-mapped allocation and fault the GPU. Render-target descriptors likewise use
+mapped allocation and fault the GPU. OpenAGC's linear image descriptor has no
+explicit pitch field, so sampled descriptors retain the logical width while
+storage follows that implicit 256-byte row layout. Render-target descriptors use
 the pitch-derived padded surface width while SDL's viewport and scissor retain
 the logical texture dimensions. `testyuv` accepts `--hardware` to select its
 native-YUV page, `--frames N` for a bounded hardware run, `--bare` to omit the
 clear and text overlay, `--display-probe` to require an exact opaque-red
 VideoOut readback, `--target-probe` to validate an untextured clear, and
 `--target-texture-probe` to validate texture sampling and readback through an
-ABGR8888 render target.
+ABGR8888 render target. `--blend-probe` verifies that a zero-alpha sampled draw
+preserves an opaque render target exactly.
 
 The scanout path keeps three disjoint flexible-memory GPU render surfaces
 separate from the three write-combined direct-memory buffers registered with
@@ -242,6 +245,15 @@ and applies the same exact-process lifecycle checks as the display probe. Set
 `SDL_PS5AGC_AUTOMATION_FILTER` to one `render_test*` name to isolate a failing
 case.
 
+Two narrower `testyuv` gates separate packed sampling from blending without
+running the full Render suite. Set `SDL_PS5AGC_PROBE_KIND=packed` to draw one
+full-surface ABGR8888 texture with blending disabled and compare its center
+against a CPU conversion. Set `SDL_PS5AGC_PROBE_KIND=blend` to draw a
+zero-alpha ABGR8888 texture over an opaque magenta render target and require
+the target to remain exactly `0xffff00ff`. Both modes use the same bounded
+fence, fatal-event, self-exit, stale-process, and WebSrv-health checks as the
+display probe.
+
 ### Current hardware status
 
 The renderer is still experimental and must not yet be used as the default in
@@ -264,13 +276,15 @@ render slots.
 The complete enabled Render suite now reaches every test safely. Renderer-count
 and primitive tests pass; packed-texture `render_testBlit` and
 `render_testBlitColor` remain failed. The first blit mismatch reads transparent
-black where the reference is opaque yellow. A focused hardware diagnostic
-confirmed the source texel is `(255,255,0,255)`, its 32x32 descriptor address
-and extent are correct, modulation is white, and direct display of the second
-interpolant produces the expected UV gradient. Replacing the sample operation
-with vertex color also renders the copy geometry. The remaining fault is
-therefore the PSBC image operation or its resource-table binding, not CPU
-upload, row pitch, vertex/UV transport, viewport geometry, or readback.
+black where the reference is opaque yellow. That coordinate is covered by
+multiple copies of the alpha-bearing face texture; a later transparent border
+texel must preserve an earlier opaque texel through source-alpha blending.
+Consequently, that mismatch alone cannot distinguish failed sampling from
+failed blending. A focused diagnostic confirmed the source texel, descriptor,
+modulation, copy geometry, UV varying, and readback paths, while an earlier
+single full-surface target-texture run returned the expected non-black sampled
+color. The guarded packed and zero-alpha probes above are now the required
+next qualification gates before changing PSBC or resource-table binding.
 Target textures, texture modulation/blending, the native YUV matrix, and longer
 recreation/submission stress remain subsequent qualification gates.
 
@@ -328,7 +342,8 @@ curl -sS --get "http://${PS5_HOST}:8080/hbldr" \
 
 `process-cleanup: refusing stale eboot count/status=1` means no other stale
 `eboot.elf` remained when the recovery payload inspected the process table; it
-then terminates itself without targeting anything. WebSrv may leave the HTTP
+is the helper's encoded zero-match result, not a process count of one. It then
+terminates itself without targeting anything. WebSrv may leave the HTTP
 pipe open until the caller's timeout after printing that line; the timeout does
 not mean a renderer was found or killed. Keep this payload as a manual recovery
 tool only—the automated qualification runner does not launch it.

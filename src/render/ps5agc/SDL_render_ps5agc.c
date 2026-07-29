@@ -518,8 +518,7 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     data->format = texture->format;
     data->scale_mode = texture->scaleMode;
     if (texture->format == SDL_PIXELFORMAT_ABGR8888) {
-        data->pitch = texture->access == SDL_TEXTUREACCESS_TARGET ?
-            (int)PS5AGC_Align((size_t)texture->w * 4u, 256u) : texture->w * 4;
+        data->pitch = (int)PS5AGC_Align((size_t)texture->w * 4u, 256u);
         data->plane_pitch[0] = data->pitch;
         data->plane_width[0] = texture->access == SDL_TEXTUREACCESS_TARGET ?
             (Uint32)(data->pitch / 4) : (Uint32)texture->w;
@@ -530,14 +529,15 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
         chroma_width = (texture->w + 1) / 2;
         chroma_height = (texture->h + 1) / 2;
         data->pitch = texture->w;
-        data->plane_pitch[0] = texture->w;
+        data->plane_pitch[0] = (int)PS5AGC_Align((size_t)texture->w, 256u);
         data->plane_width[0] = (Uint32)texture->w;
         data->plane_height[0] = (Uint32)texture->h;
         y_bytes = (size_t)data->plane_pitch[0] * texture->h;
         if (texture->format == SDL_PIXELFORMAT_NV12 ||
             texture->format == SDL_PIXELFORMAT_NV21) {
             data->plane_count = 2u;
-            data->plane_pitch[1] = chroma_width * 2;
+            data->plane_pitch[1] = (int)PS5AGC_Align(
+                (size_t)chroma_width * 2u, 256u);
             data->plane_width[1] = (Uint32)chroma_width;
             data->plane_height[1] = (Uint32)chroma_height;
             data->plane_offset[1] = PS5AGC_Align(y_bytes, 256u);
@@ -547,7 +547,8 @@ static int PS5AGC_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
             data->pixel_bytes = data->plane_offset[1] + chroma_bytes;
         } else {
             data->plane_count = 3u;
-            data->plane_pitch[1] = chroma_width;
+            data->plane_pitch[1] = (int)PS5AGC_Align(
+                (size_t)chroma_width, 256u);
             data->plane_pitch[2] = data->plane_pitch[1];
             data->plane_width[1] = data->plane_width[2] = (Uint32)chroma_width;
             data->plane_height[1] = data->plane_height[2] = (Uint32)chroma_height;

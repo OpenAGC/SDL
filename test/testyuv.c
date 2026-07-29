@@ -375,6 +375,8 @@ int main(int argc, char **argv)
     SDL_bool clear_only = SDL_FALSE;
     SDL_bool display_probe = SDL_FALSE;
     SDL_bool target_probe = SDL_FALSE;
+    SDL_bool packed_texture_probe = SDL_FALSE;
+    SDL_bool blend_probe = SDL_FALSE;
     SDL_bool yuv_update_probe = SDL_FALSE;
     SDL_bool probe_failed = SDL_FALSE;
     Uint32 renderer_flags = 0;
@@ -438,6 +440,13 @@ int main(int argc, char **argv)
         } else if (SDL_strcmp(argv[arg], "--target-texture-probe") == 0) {
             bare_frame = SDL_TRUE;
             target_probe = SDL_TRUE;
+            packed_texture_probe = SDL_TRUE;
+            current = 0;
+        } else if (SDL_strcmp(argv[arg], "--blend-probe") == 0) {
+            bare_frame = SDL_TRUE;
+            target_probe = SDL_TRUE;
+            blend_probe = SDL_TRUE;
+            current = 0;
         } else if (SDL_strcmp(argv[arg], "--yuv-update-probe") == 0) {
             bare_frame = SDL_TRUE;
             target_probe = SDL_TRUE;
@@ -458,12 +467,13 @@ int main(int argc, char **argv)
             }
             max_frames = SDL_atoi(argv[++arg]);
         } else {
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe|--yuv-update-probe] [--renderer name] [--accelerated] [--frames count] [image_filename]\n", argv[0]);
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Usage: %s [--jpeg|--bt601|-bt709|--auto] [--yv12|--iyuv|--yuy2|--uyvy|--yvyu|--nv12|--nv21] [--rgb555|--rgb565|--rgb24|--argb|--abgr|--rgba|--bgra] [--hardware] [--bare|--clear-only|--display-probe|--target-probe|--target-texture-probe|--blend-probe|--yuv-update-probe] [--renderer name] [--accelerated] [--frames count] [image_filename]\n", argv[0]);
             return 1;
         }
         ++arg;
     }
-    if (display_probe && max_frames == 0) {
+    if ((display_probe || packed_texture_probe || blend_probe ||
+         yuv_update_probe) && max_frames == 0) {
         max_frames = 1;
     }
 
@@ -582,6 +592,21 @@ int main(int argc, char **argv)
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't set create texture: %s\n", SDL_GetError());
         return 5;
     }
+    if (packed_texture_probe &&
+        SDL_SetTextureBlendMode(output[0], SDL_BLENDMODE_NONE) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Couldn't disable packed probe blending: %s\n",
+                     SDL_GetError());
+        return 5;
+    }
+    if (blend_probe &&
+        (SDL_SetTextureBlendMode(output[0], SDL_BLENDMODE_BLEND) < 0 ||
+         SDL_SetTextureAlphaMod(output[0], 0) < 0)) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Couldn't configure zero-alpha blend probe: %s\n",
+                     SDL_GetError());
+        return 5;
+    }
     if (yuv_update_probe) {
         if (UpdateTextureWithOddPitches(output[2], yuv_format, raw_yuv,
                                         original->w, original->h) < 0) {
@@ -689,6 +714,49 @@ int main(int argc, char **argv)
                                      "VideoOut readback mismatch: expected 0xff0000ff\n");
                         probe_failed = SDL_TRUE;
                     }
+                    if (packed_texture_probe) {
+                        const Uint8 *expected_source =
+                            (const Uint8 *)original->pixels +
+                            (size_t)(original->h / 2) * original->pitch +
+                            (size_t)(original->w / 2) * original->format->BytesPerPixel;
+                        if (SDL_ConvertPixels(1, 1,
+                                             original->format->format,
+                                             expected_source, original->pitch,
+                                             SDL_PIXELFORMAT_ABGR8888,
+                                             &expected_probe,
+                                             (int)sizeof(expected_probe)) < 0) {
+                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                         "Packed probe CPU conversion failed: %s\n",
+                                         SDL_GetError());
+                            probe_failed = SDL_TRUE;
+                        } else if (!PixelsWithinTolerance(probe, expected_probe, 1)) {
+                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                         "Packed texture probe mismatch: expected 0x%08" SDL_PRIx32
+                                         " actual 0x%08" SDL_PRIx32 " tolerance=1\n",
+                                         expected_probe, probe);
+                            probe_failed = SDL_TRUE;
+                        } else {
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "Packed texture probe: PASS expected=0x%08" SDL_PRIx32
+                                        " actual=0x%08" SDL_PRIx32 " tolerance=1\n",
+                                        expected_probe, probe);
+                        }
+                    }
+                    if (blend_probe) {
+                        expected_probe = 0xffff00ffu;
+                        if (probe != expected_probe) {
+                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                         "Zero-alpha blend probe mismatch: expected 0x%08" SDL_PRIx32
+                                         " actual 0x%08" SDL_PRIx32 "\n",
+                                         expected_probe, probe);
+                            probe_failed = SDL_TRUE;
+                        } else {
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "Zero-alpha blend probe: PASS expected=0x%08" SDL_PRIx32
+                                        " actual=0x%08" SDL_PRIx32 "\n",
+                                        expected_probe, probe);
+                        }
+                    }
                     if (yuv_update_probe) {
                         const Uint8 *expected_source =
                             (const Uint8 *)converted->pixels +
@@ -720,7 +788,8 @@ int main(int argc, char **argv)
                 } else {
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "GPU center readback failed: %s\n", SDL_GetError());
-                    probe_failed = display_probe || yuv_update_probe;
+                    probe_failed = display_probe || packed_texture_probe ||
+                                   blend_probe || yuv_update_probe;
                 }
             }
             SDL_RenderPresent(renderer);
