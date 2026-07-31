@@ -80,18 +80,56 @@ FIFO/VSYNC only, disabling VSYNC fails instead of being emulated.
 - Verify software fallback on OpenAGC-rejected hardware and run existing
   OSMesa tests unchanged.
 
+## Native OpenAGC runtime migration gate
+
+OpenAGC now also publishes a firmware-neutral native runtime
+(`openagc/runtime.h`; API version 25 at the reviewed OpenAGC head) with typed
+resource transitions, command batches, bounded fences, recycling, capture,
+and optional validation diagnostics. It is a future consolidation option, not
+yet a replacement for the qualified `ps5agc` presentation path.
+
+- Keep the direct renderer as the qualified path. It obtains the mode through
+  `agcVideoOutGetDefaultMode`, owns three caller-provided VideoOut buffers,
+  and its direct graphics, copy, fence, and VideoOut APIs remain public in the
+  reviewed OpenAGC revision.
+- Do not select the runtime from `OpenAGC_VERSION` alone. The project remains
+  version 0.2.0, so pin an immutable release that explicitly exports native
+  runtime API 25 or later and matching shader contracts (reflection format 2
+  and compiler API 15 at the reviewed head). Keep checked-in SDL shader blobs
+  and reflection records reproducible from that pinned toolchain.
+- Prototype a runtime-backed renderer only after the direct renderer passes its
+  complete hardware suite. Device selection, queue ownership, transitions,
+  submission, fence waits, and recycling must use public runtime APIs; map
+  errors to SDL without exposing OpenAGC internals or firmware policy.
+- Do not migrate presentation yet. The current runtime present chain accepts
+  only two to sixteen distinct 1920x1080 linear `RGBA8_UNORM` scanout images.
+  Its documented combined two-buffer registration/transition/flip experiment
+  did not return and remains invalid; never rerun that historical experiment.
+- Permit runtime presentation only after it supports SDL's required default
+  VideoOut modes, an equivalent of triple-buffer ownership, and a new safe,
+  repeated render/copy/present/readback/recreate artifact with finite waits and
+  clean teardown on OpenAGC-accepted hardware. This is a new qualification
+  run, not an inference from the earlier registration-only ladder.
+- Before runtime mode ships, run direct and runtime build/install consumers and
+  the target, YUV, readback, selection, fallback, and recreation stress suites.
+  Retain the direct renderer and software fallback until that evidence exists.
+
 ## Later accelerated OpenGL milestone
 
 1. Package Vulkan-Headers, openagc-psbc, and Vulkan-PS5 in dependency order.
 2. Keep platform support policy in Vulkan-PS5/OpenAGC and consume only public
-   Vulkan results from Mesa and SDL.
-3. Extend Vulkan-PS5 until a pinned Mesa/Zink capability probe passes using
+   Vulkan results from Mesa and SDL. Keep Vulkan-PS5's direct OpenAGC
+   integration as its qualified baseline while the runtime reaches this gate.
+3. Migrate Vulkan-PS5 to the native runtime only after its runtime and
+   presentation contracts qualify for the required surface modes, then rerun
+   its pinned capability probes.
+4. Extend Vulkan-PS5 until a pinned Mesa/Zink capability probe passes using
    implemented Vulkan features.
-4. Enable Zink with swrast and add a PS5 EGL/WSI bridge over the Vulkan-PS5
+5. Enable Zink with swrast and add a PS5 EGL/WSI bridge over the Vulkan-PS5
    VideoOut swapchain.
-5. Select Zink for accelerated SDL OpenGL contexts while retaining OSMesa as
+6. Select Zink for accelerated SDL OpenGL contexts while retaining OSMesa as
    the software option.
-6. Do not package `glonagc` until it uses Mesa Gallium interfaces and passes
+7. Do not package `glonagc` until it uses Mesa Gallium interfaces and passes
    upstream hardware validation.
 
 ## Assumptions
@@ -105,8 +143,10 @@ FIFO/VSYNC only, disabling VSYNC fails instead of being emulated.
 
 ## Building the current integration
 
-OpenAGC remains opt-in and this integration requires OpenAGC 0.2.0 or newer.
-For a Prospero build, install a tagged OpenAGC package
+OpenAGC remains opt-in. The direct integration requires OpenAGC 0.2.0 or
+newer; a future runtime integration must use the separately pinned runtime API
+contract above, rather than treating project version 0.2.0 as sufficient. For
+a Prospero build, install a tagged OpenAGC package
 into the SDK sysroot (or set `OpenAGC_DIR` to its config-package directory),
 then configure SDL with:
 
