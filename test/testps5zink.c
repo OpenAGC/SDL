@@ -31,6 +31,7 @@ int main(int argc, char **argv)
 {
     SDL_Window *window = NULL;
     SDL_GLContext context = NULL;
+    void *vulkan_library = NULL;
     const GLubyte *renderer;
     PS5_PFNGLGETSTRINGPROC p_glGetString;
     PS5_PFNGLVIEWPORTPROC p_glViewport;
@@ -42,15 +43,43 @@ int main(int argc, char **argv)
     Uint8 pixel[4] = { 0, 0, 0, 0 };
     int result = 1;
 
-    if (argc == 2 && SDL_strncmp(argv[1], "--egl=", 6) == 0 && argv[1][6]) {
+    if ((argc == 2 || argc == 3) &&
+        SDL_strncmp(argv[1], "--egl=", 6) == 0 && argv[1][6]) {
         if (SDL_setenv("SDL_VIDEO_EGL_DRIVER", argv[1] + 6, 1) != 0) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "ps5-zink: could not set EGL path");
             goto done;
         }
+        if (argc == 3 &&
+            (SDL_strncmp(argv[2], "--vulkan=", 9) != 0 || !argv[2][9] ||
+             SDL_setenv("ZINK_VULKAN_LIBRARY", argv[2] + 9, 1) != 0)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5-zink: invalid Vulkan library path");
+            goto done;
+        }
+        if (argc == 3) {
+            vulkan_library = SDL_LoadObject(argv[2] + 9);
+            if (!vulkan_library ||
+                !SDL_LoadFunction(vulkan_library, "vkGetInstanceProcAddr") ||
+                !SDL_LoadFunction(vulkan_library, "vkGetDeviceProcAddr")) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "ps5-zink: Vulkan library preflight failed: %s",
+                             SDL_GetError());
+                goto done;
+            }
+            SDL_Log("ps5-zink: Vulkan library preflight PASS");
+        }
     } else if (argc != 1) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "usage: testps5zink [--egl=/absolute/libEGL.so.1]");
+                     "usage: testps5zink [--egl=/absolute/libEGL.so.1 "
+                     "--vulkan=/absolute/libvulkan_ps5.so]");
+        goto done;
+    }
+    if (SDL_setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1) != 0 ||
+        SDL_setenv("EGL_LOG_LEVEL", "debug", 1) != 0 ||
+        SDL_setenv("MESA_DEBUG", "1", 1) != 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "ps5-zink: could not configure Mesa diagnostics");
         goto done;
     }
     if (SDL_SetHint(SDL_HINT_PS5_OPENGL_DRIVER, "zink") != SDL_TRUE) {
@@ -78,6 +107,7 @@ int main(int argc, char **argv)
                      "ps5-zink: context failed: %s", SDL_GetError());
         goto done;
     }
+    SDL_Log("ps5-zink: SDL GL context ready");
     p_glGetString = (PS5_PFNGLGETSTRINGPROC)SDL_GL_GetProcAddress("glGetString");
     p_glViewport = (PS5_PFNGLVIEWPORTPROC)SDL_GL_GetProcAddress("glViewport");
     p_glClearColor = (PS5_PFNGLCLEARCOLORPROC)SDL_GL_GetProcAddress("glClearColor");
@@ -91,6 +121,8 @@ int main(int argc, char **argv)
                      "ps5-zink: required GL entry point is missing");
         goto done;
     }
+    SDL_Log("ps5-zink: GL entry points ready");
+    SDL_Log("ps5-zink: querying GL renderer");
     renderer = p_glGetString(GL_RENDERER);
     if (!renderer || !SDL_strstr((const char *)renderer, "zink")) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -117,7 +149,7 @@ int main(int argc, char **argv)
     SDL_GL_SwapWindow(window);
     if (*SDL_GetError() != '\0') {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "ps5-zink: pbuffer swap failed: %s", SDL_GetError());
+                     "ps5-zink: native-window swap failed: %s", SDL_GetError());
         goto done;
     }
 
@@ -133,5 +165,8 @@ done:
         SDL_DestroyWindow(window);
     }
     SDL_Quit();
+    if (vulkan_library) {
+        SDL_UnloadObject(vulkan_library);
+    }
     return result;
 }

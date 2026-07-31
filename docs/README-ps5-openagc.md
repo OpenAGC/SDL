@@ -127,12 +127,17 @@ yet a replacement for the qualified `ps5agc` presentation path.
    with `build-scripts/build-ps5-zink.sh`. This runtime loads
    `libvulkan_ps5.so` and does not replace the independent Mesa 22.1.7 OSMesa
    fallback.
-5. SDL's opt-in `SDL_PS5_ZINK` path provides a surfaceless EGL pbuffer gate.
-   Select it explicitly with `SDL_HINT_PS5_OPENGL_DRIVER=zink`; missing or
-   malformed selection fails closed. OSMesa remains the default until the
-   hardware EGL/readback gate and the later native-window WSI gate pass.
-6. Add the PS5 EGL native-window/WSI bridge over the Vulkan-PS5 present chain,
-   then qualify visible swap, teardown, and immediate relaunch on hardware.
+5. SDL's opt-in `SDL_PS5_ZINK` path now creates a native-window EGL surface.
+   Mesa's Prospero surfaceless loader lowers the stable SDL window identity to
+   `VK_EXT_headless_surface`; Vulkan-PS5 remains the sole owner of swapchain,
+   VideoOut, synchronization, and the OpenAGC present chain. Select it
+   explicitly with `SDL_HINT_PS5_OPENGL_DRIVER=zink`; missing or malformed
+   selection fails closed.
+6. The native-window bridge, deterministic readback probe, guarded runtime
+   upload, Mesa Prospero build, Vulkan-PS5 46/46 generic suite, shared-ICD
+   build, and SDL qualification ELF build pass on the host. Visible swap,
+   teardown, and immediate relaunch remain pending on FW 5.50. OSMesa remains
+   the default until those hardware gates pass.
 7. Do not package `glonagc` until it uses Mesa Gallium interfaces and passes
    upstream hardware validation.
 

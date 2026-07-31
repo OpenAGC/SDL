@@ -5,8 +5,12 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=$(dirname -- "$script_dir")
-build_dir=${SDL_PS5AGC_BUILD_DIR:-$repo_dir/build-ps5agc-native2}
 probe_kind=${SDL_PS5AGC_PROBE_KIND:-display}
+if [ "$probe_kind" = zink ]; then
+    build_dir=${SDL_PS5AGC_BUILD_DIR:-$repo_dir/build-ps5-zink}
+else
+    build_dir=${SDL_PS5AGC_BUILD_DIR:-$repo_dir/build-ps5agc-native2}
+fi
 automation_filter=${SDL_PS5AGC_AUTOMATION_FILTER:-Render}
 standalone_target=${SDL_PS5AGC_STANDALONE_TARGET:-}
 failure_point=${SDL_PS5AGC_FAILURE_POINT:-}
@@ -19,6 +23,9 @@ elif [ "$probe_kind" = standalone ]; then
 elif [ "$probe_kind" = failure ]; then
     probe_target=testps5agcfailure
     default_elf=$build_dir/test/testps5agcfailure
+elif [ "$probe_kind" = zink ]; then
+    probe_target=testps5zink
+    default_elf=$build_dir/test/testps5zink
 else
     probe_target=testyuv
     default_elf=$build_dir/test/testyuv
@@ -43,6 +50,10 @@ pyps4debug_dir=${PYPS4DEBUG_DIR:-/Users/bizkut/Downloads/PS5/homebrew/PyPS4debug
 killer=${PS5DEBUG_KILLER:-$repo_dir/../Vulkan-PS5/examples/ps5debug_kill_process.py}
 log_dir=${SDL_PS5AGC_LOG_DIR:-${TMPDIR:-/tmp}/sdl-ps5agc-qualification}
 remote_dir=/data/homebrew/sdl_ps5agc_display_probe
+mesa_stage=${SDL_PS5_ZINK_MESA_STAGE:-$repo_dir/../mesa/build-prospero-zink-stage/user/homebrew/lib}
+zink_egl=${SDL_PS5_ZINK_EGL:-$mesa_stage/libEGL.so.1.0.0}
+zink_gallium=${SDL_PS5_ZINK_GALLIUM:-$mesa_stage/libgallium-26.3.0-devel.so}
+zink_vulkan=${SDL_PS5_ZINK_VULKAN:-$repo_dir/../Vulkan-PS5/build-prospero-zink-icd/libvulkan_ps5.so}
 
 if [ -z "$expected_renderer" ]; then
     if [ "$probe_renderer" = auto ]; then
@@ -96,9 +107,9 @@ case "$expected_renderer" in
         ;;
 esac
 case "$probe_kind" in
-    automation|blend|churn|display|failure|packed|recreate|standalone|target|yuv) ;;
+    automation|blend|churn|display|failure|packed|recreate|standalone|target|yuv|zink) ;;
     *)
-        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, churn, display, failure, packed, recreate, standalone, target, or yuv" >&2
+        echo "SDL_PS5AGC_PROBE_KIND must be automation, blend, churn, display, failure, packed, recreate, standalone, target, yuv, or zink" >&2
         exit 2
         ;;
 esac
@@ -147,7 +158,8 @@ case "$probe_accelerated" in
         exit 2
         ;;
 esac
-if { [ "$probe_kind" = standalone ] || [ "$probe_kind" = failure ]; } &&
+if { [ "$probe_kind" = standalone ] || [ "$probe_kind" = failure ] ||
+     [ "$probe_kind" = zink ]; } &&
    [ "$probe_accelerated" -ne 0 ]; then
     echo "SDL_PS5AGC_PROBE_ACCELERATED is not supported by this probe kind" >&2
     exit 2
@@ -181,6 +193,19 @@ if [ "$probe_kind" = failure ] &&
     echo "failure probes require SDL_PS5_OPENAGC_TEST_HOOKS=ON in $build_dir" >&2
     exit 2
 fi
+if [ "$probe_kind" = zink ]; then
+    if ! grep -F 'SDL_PS5_ZINK:BOOL=ON' "$build_dir/CMakeCache.txt" >/dev/null 2>&1 ||
+       ! grep -F 'SDL_LOADSO:BOOL=ON' "$build_dir/CMakeCache.txt" >/dev/null 2>&1; then
+        echo "zink probes require SDL_PS5_ZINK=ON and SDL_LOADSO=ON in $build_dir" >&2
+        exit 2
+    fi
+    for runtime_file in "$zink_egl" "$zink_gallium" "$zink_vulkan"; do
+        if [ ! -f "$runtime_file" ]; then
+            echo "missing zink runtime file: $runtime_file" >&2
+            exit 2
+        fi
+    done
+fi
 if [ "$skip_build" -eq 0 ] && [ "$elf" = "$default_elf" ]; then
     if ! command -v cmake >/dev/null 2>&1; then
         echo "cmake is required to rebuild the default probe ELF" >&2
@@ -197,7 +222,8 @@ if [ ! -f "$elf" ]; then
     exit 2
 fi
 if [ "$probe_kind" != automation ] && [ "$probe_kind" != standalone ] &&
-   [ "$probe_kind" != failure ] && [ ! -f "$bmp" ]; then
+   [ "$probe_kind" != failure ] && [ "$probe_kind" != zink ] &&
+   [ ! -f "$bmp" ]; then
     echo "missing testyuv BMP: $bmp" >&2
     exit 2
 fi
@@ -261,7 +287,14 @@ curl -sS --connect-timeout 3 --max-time 10 \
     "ftp://${PS5_HOST}:2121/" --quote "MKD $remote_dir" >/dev/null 2>&1 || true
 curl -sS --connect-timeout 3 --max-time 30 -T "$elf" \
     "ftp://${PS5_HOST}:2121${remote_dir}/eboot.elf"
-if [ "$probe_kind" = standalone ]; then
+if [ "$probe_kind" = zink ]; then
+    curl -sS --connect-timeout 3 --max-time 60 -T "$zink_egl" \
+        "ftp://${PS5_HOST}:2121${remote_dir}/libEGL.so.1"
+    curl -sS --connect-timeout 3 --max-time 120 -T "$zink_gallium" \
+        "ftp://${PS5_HOST}:2121${remote_dir}/libgallium-26.3.0-devel.so"
+    curl -sS --connect-timeout 3 --max-time 120 -T "$zink_vulkan" \
+        "ftp://${PS5_HOST}:2121${remote_dir}/libvulkan_ps5.so"
+elif [ "$probe_kind" = standalone ]; then
     for resource in icon.bmp sample.bmp; do
         curl -sS --connect-timeout 3 --max-time 30 -T "$build_dir/test/$resource" \
             "ftp://${PS5_HOST}:2121${remote_dir}/$resource"
@@ -282,6 +315,8 @@ if [ "$probe_kind" = automation ]; then
     probe_args="--filter ${automation_filter}"
 elif [ "$probe_kind" = failure ]; then
     probe_args="--failure ${failure_point}"
+elif [ "$probe_kind" = zink ]; then
+    probe_args="--egl=${remote_dir}/libEGL.so.1 --vulkan=${remote_dir}/libvulkan_ps5.so"
 elif [ "$probe_kind" = standalone ]; then
     case "$standalone_target" in
         testgeometry)
@@ -309,7 +344,7 @@ elif [ "$probe_kind" = recreate ]; then
 else
     probe_args=--display-probe
 fi
-if [ "$probe_kind" = failure ]; then
+if [ "$probe_kind" = failure ] || [ "$probe_kind" = zink ]; then
     launch_args=$probe_args
 elif [ "$probe_kind" = automation ] || [ "$probe_kind" = standalone ]; then
     launch_args=$probe_args
@@ -403,6 +438,13 @@ else
         if ! grep -F "ps5agc failure injection: PASS point=${failure_point}" "$log" >/dev/null; then
             oracle_failed=1
         fi
+    elif [ "$probe_kind" = zink ]; then
+        if ! grep -F 'ps5-zink: PASS renderer=' "$log" >/dev/null ||
+           ! grep -F 'rgba=64,128,191,255' "$log" >/dev/null ||
+           ! grep -i 'renderer=.*zink' "$log" >/dev/null ||
+           grep -E 'ps5-zink: (.*failed|.*mismatch|unexpected|required)' "$log" >/dev/null; then
+            oracle_failed=1
+        fi
     elif [ "$probe_kind" = standalone ]; then
         if ! grep -F "Frame limit reached: ${probe_frames}" "$log" >/dev/null ||
            ! awk -v expected="$expected_renderer" '
@@ -451,13 +493,13 @@ else
         oracle_failed=1
     fi
     if [ "$probe_kind" != automation ] && [ "$probe_kind" != standalone ] &&
-       [ "$probe_kind" != failure ] &&
+       [ "$probe_kind" != failure ] && [ "$probe_kind" != zink ] &&
        ! grep -F "Renderer selected: ${expected_renderer}" "$log" >/dev/null; then
         oracle_failed=1
     fi
     if [ "$expected_renderer" = ps5agc ] &&
        [ "$probe_kind" != automation ] && [ "$probe_kind" != standalone ] &&
-       [ "$probe_kind" != failure ] &&
+       [ "$probe_kind" != failure ] && [ "$probe_kind" != zink ] &&
        ! grep -F 'ps5agc display mode: ' "$log" >/dev/null; then
         oracle_failed=1
     fi
@@ -499,6 +541,8 @@ else
         echo "ps5agc display probe: PASS kind=automation filter=$automation_filter requested=$probe_renderer selected=$expected_renderer pid=$target_pid"
     elif [ "$probe_kind" = failure ]; then
         echo "ps5agc display probe: PASS kind=failure point=$failure_point pid=$target_pid"
+    elif [ "$probe_kind" = zink ]; then
+        echo "ps5agc display probe: PASS kind=zink egl-readback=64,128,191,255 pid=$target_pid"
     elif [ "$probe_kind" = standalone ]; then
         echo "ps5agc display probe: PASS kind=standalone target=$standalone_target requested=$probe_renderer selected=$expected_renderer frames=$probe_frames pid=$target_pid"
     elif [ "$probe_kind" = yuv ]; then

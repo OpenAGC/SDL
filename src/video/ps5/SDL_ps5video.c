@@ -404,8 +404,11 @@ static int PS5_CreateWindow(_THIS, SDL_Window *window)
     window->driverdata = window_data;
 #ifdef SDL_PS5_ZINK
     if ((window->flags & SDL_WINDOW_OPENGL) && _this->egl_data) {
-        window_data->egl_surface = SDL_EGL_CreateOffscreenSurface(
-            _this, window->w, window->h);
+        /* Mesa's Prospero surfaceless platform treats this stable SDL_Window
+         * identity as a native window and lowers it to VK_EXT_headless_surface.
+         * Vulkan-PS5 remains the sole owner of VideoOut and AgcPresentChain. */
+        window_data->egl_surface = SDL_EGL_CreateSurface(
+            _this, (NativeWindowType)window);
         if (window_data->egl_surface == EGL_NO_SURFACE) {
             SDL_free(window_data);
             window->driverdata = NULL;
