@@ -27,10 +27,14 @@
 #include <pthread.h>
 #include <sys/mman.h>
 
+#include "SDL_hints.h"
 #include "SDL_ps5tilemap.inc"
 #include "SDL_ps5video.h"
 #include "SDL_ps5keyboard.h"
 #include "SDL_ps5osmesa.h"
+#ifdef SDL_PS5_ZINK
+#include "SDL_ps5egl.h"
+#endif
 
 #define PS5_THREAD_COUNT 12
 #define PS5_SOFTWARE_WIDTH 1920
@@ -391,6 +395,24 @@ static void PS5_VideoQuit(_THIS)
 
 static int PS5_CreateWindow(_THIS, SDL_Window *window)
 {
+    PS5_WindowData *window_data;
+
+    window_data = (PS5_WindowData *)SDL_calloc(1, sizeof(*window_data));
+    if (!window_data) {
+        return SDL_OutOfMemory();
+    }
+    window->driverdata = window_data;
+#ifdef SDL_PS5_ZINK
+    if ((window->flags & SDL_WINDOW_OPENGL) && _this->egl_data) {
+        window_data->egl_surface = SDL_EGL_CreateOffscreenSurface(
+            _this, window->w, window->h);
+        if (window_data->egl_surface == EGL_NO_SURFACE) {
+            SDL_free(window_data);
+            window->driverdata = NULL;
+            return SDL_SetError("Could not create PS5 Zink EGL surface");
+        }
+    }
+#endif
     return 0;
 }
 
@@ -402,6 +424,18 @@ static void PS5_DestroyDevice(SDL_VideoDevice *device)
 
 static void PS5_DestroyWindow(_THIS, SDL_Window *window)
 {
+    PS5_WindowData *window_data = (PS5_WindowData *)window->driverdata;
+
+    if (!window_data) {
+        return;
+    }
+#ifdef SDL_PS5_ZINK
+    if (_this->egl_data && window_data->egl_surface != EGL_NO_SURFACE) {
+        SDL_EGL_DestroySurface(_this, window_data->egl_surface);
+    }
+#endif
+    SDL_free(window_data);
+    window->driverdata = NULL;
 }
 
 static void PS5_PumpEvents(_THIS)
@@ -446,7 +480,21 @@ static SDL_VideoDevice *PS5_CreateDevice(void)
     device->free = PS5_DestroyDevice;
 
 #ifdef SDL_VIDEO_OPENGL_OSMESA
-    PS5_OSMesa_InitDevice(device);
+    {
+        const char *gl_driver = SDL_GetHint(SDL_HINT_PS5_OPENGL_DRIVER);
+#ifdef SDL_PS5_ZINK
+        if (gl_driver && SDL_strcmp(gl_driver, "zink") == 0) {
+            PS5_EGL_InitDevice(device);
+        } else
+#endif
+        if (!gl_driver || SDL_strcmp(gl_driver, "osmesa") == 0) {
+            PS5_OSMesa_InitDevice(device);
+        } else {
+            SDL_SetError("Unsupported PS5 OpenGL driver: %s", gl_driver);
+            PS5_DestroyDevice(device);
+            return NULL;
+        }
+    }
 #endif
 
     return device;

@@ -114,21 +114,25 @@ yet a replacement for the qualified `ps5agc` presentation path.
   the target, YUV, readback, selection, fallback, and recreation stress suites.
   Retain the direct renderer and software fallback until that evidence exists.
 
-## Later accelerated OpenGL milestone
+## Accelerated OpenGL / Zink status
 
-1. Package Vulkan-Headers, openagc-psbc, and Vulkan-PS5 in dependency order.
+1. Package Vulkan-Headers, OpenAGC, openagc-psbc, Vulkan-PS5, the pinned
+   Mesa-Zink runtime, and SDL in dependency order.
 2. Keep platform support policy in Vulkan-PS5/OpenAGC and consume only public
    Vulkan results from Mesa and SDL. Keep Vulkan-PS5's direct OpenAGC
    integration as its qualified baseline while the runtime reaches this gate.
-3. Migrate Vulkan-PS5 to the native runtime only after its runtime and
-   presentation contracts qualify for the required surface modes, then rerun
-   its pinned capability probes.
-4. Extend Vulkan-PS5 until a pinned Mesa/Zink capability probe passes using
-   implemented Vulkan features.
-5. Enable Zink with swrast and add a PS5 EGL/WSI bridge over the Vulkan-PS5
-   VideoOut swapchain.
-6. Select Zink for accelerated SDL OpenGL contexts while retaining OSMesa as
-   the software option.
+3. Vulkan-PS5 now uses the native runtime and its strict pinned capability
+   probe passes. Keep the frozen capability profile as a package gate.
+4. The pinned Mesa revision can be cross-built as an EGL plus Zink runtime
+   with `build-scripts/build-ps5-zink.sh`. This runtime loads
+   `libvulkan_ps5.so` and does not replace the independent Mesa 22.1.7 OSMesa
+   fallback.
+5. SDL's opt-in `SDL_PS5_ZINK` path provides a surfaceless EGL pbuffer gate.
+   Select it explicitly with `SDL_HINT_PS5_OPENGL_DRIVER=zink`; missing or
+   malformed selection fails closed. OSMesa remains the default until the
+   hardware EGL/readback gate and the later native-window WSI gate pass.
+6. Add the PS5 EGL native-window/WSI bridge over the Vulkan-PS5 present chain,
+   then qualify visible swap, teardown, and immediate relaunch on hardware.
 7. Do not package `glonagc` until it uses Mesa Gallium interfaces and passes
    upstream hardware validation.
 
@@ -140,6 +144,9 @@ yet a replacement for the qualified `ps5agc` presentation path.
   OpenAGC APIs expose more.
 - OSMesa remains software-only; accelerated OpenGL is a Vulkan-PS5/Zink
   milestone.
+- Mesa-Zink and openagc-psbc intentionally use different pinned Mesa compiler
+  snapshots. They communicate through Vulkan and SPIR-V and must not link to
+  one another's private Mesa interfaces.
 
 ## Building the current integration
 

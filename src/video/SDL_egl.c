@@ -20,6 +20,10 @@
  */
 #include "../SDL_internal.h"
 
+#if defined(SDL_VIDEO_DRIVER_PS5) && defined(SDL_PS5_ZINK)
+#include "SDL_hints.h"
+#endif
+
 #ifdef SDL_VIDEO_OPENGL_EGL
 
 #if defined(SDL_VIDEO_DRIVER_WINDOWS) || defined(SDL_VIDEO_DRIVER_WINRT)
@@ -382,7 +386,12 @@ static int SDL_EGL_LoadLibraryInternal(_THIS, const char *egl_path)
     }
     _this->egl_data->opengl_dll_handle = opengl_dll_handle;
 
-    if (!opengl_dll_handle) {
+    if (!opengl_dll_handle
+#if defined(SDL_VIDEO_DRIVER_PS5) && defined(SDL_PS5_ZINK)
+        && (!SDL_GetHint(SDL_HINT_PS5_OPENGL_DRIVER) ||
+            SDL_strcmp(SDL_GetHint(SDL_HINT_PS5_OPENGL_DRIVER), "zink") != 0)
+#endif
+    ) {
         return SDL_SetError("Could not initialize OpenGL / GLES library");
     }
 

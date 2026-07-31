@@ -1502,6 +1502,15 @@ extern "C" {
 #define SDL_HINT_OPENGL_ES_DRIVER   "SDL_OPENGL_ES_DRIVER"
 
 /**
+ *  \brief Select the PS5 OpenGL implementation.
+ *
+ *  The supported values are "osmesa" and "zink". OSMesa remains the
+ *  default until the Zink EGL/WSI hardware qualification gate is complete.
+ *  The hint must be set before SDL video initialization.
+ */
+#define SDL_HINT_PS5_OPENGL_DRIVER "SDL_PS5_OPENGL_DRIVER"
+
+/**
  *  \brief  A variable controlling which orientations are allowed on iOS/Android.
  *
  *  In some circumstances it is necessary to be able to explicitly control

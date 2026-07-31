@@ -26,6 +26,18 @@
 #include <sys/event.h>
 
 #include "../SDL_sysvideo.h"
+#ifdef SDL_VIDEO_OPENGL_EGL
+#include "../SDL_egl_c.h"
+#endif
+
+typedef struct PS5_WindowData
+{
+#ifdef SDL_VIDEO_OPENGL_EGL
+    EGLSurface egl_surface;
+#else
+    int unused;
+#endif
+} PS5_WindowData;
 
 typedef struct PS5_VideoBuf {
     void *data;
