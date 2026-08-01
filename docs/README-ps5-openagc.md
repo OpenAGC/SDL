@@ -133,22 +133,25 @@ yet a replacement for the qualified `ps5agc` presentation path.
    VideoOut, synchronization, and the OpenAGC present chain. Select it
    explicitly with `SDL_HINT_PS5_OPENGL_DRIVER=zink`; missing or malformed
    selection fails closed.
-6. The native-window bridge is FW 5.500.008-qualified. Two immediate guarded
-   depth-clip release-candidate runs (`20260801T043729Z` and
-   `20260801T043745Z`) created the real Zink EGL
-   context, returned exact RGBA `64,128,191,255`, presented, released every
-   OpenAGC child, self-exited, and relaunched without reboot. Neither log
-   contains Mesa's former `VK_EXT_depth_clip_enable` warning. The Vulkan-PS5
-   generic and ASan/UBSan suites pass 47/47 and its shared-ICD verifier reports
-   204 exports with only supported dynamic relocations. The tested hashes are:
+6. The native-window bridge is qualified on FW 5.500.008 and FW 11.600.005.
+   After removing Gallium's redundant Prospero `$ORIGIN` RUNPATH while
+   retaining the EGL loader's colocated-library RUNPATH, the exact candidate
+   passed three consecutive FW 11.60 runs (`20260801T060248Z`,
+   `20260801T060313Z`, `20260801T060341Z`) and two immediate FW 5.50 replays
+   (`20260801T060410Z`, `20260801T060435Z`). Every run created the real Zink
+   EGL context, returned exact RGBA `64,128,191,255`, visibly presented,
+   released every OpenAGC child, self-exited, and relaunched without reboot.
+   Raw klog on port 3232 attributed clean teardown to each exact PID. The
+   Vulkan-PS5 generic and ASan/UBSan suites pass 47/47 and its shared-ICD
+   verifier reports 204 exports with only supported dynamic relocations. The
+   identical tested hashes are:
 
    - `testps5zink`: `95da10acf89da3e35865890874034b8bffef1c563417309a0e4bb98404540ad9`
-   - `libvulkan_ps5.so`: `a0b52105b1ab1806553fa0777991e78f57545ba2d0d550cbf3b6d2f83bd341c7`
+   - `libvulkan_ps5.so`: `eacc4cf3dd1c15983e9f78482d65b14250d073a161c0b02433087eaeb5b6d271`
    - `libEGL.so.1.0.0`: `0d2922b30b3dbbe25f060331043bb4a4732272d0813023568381306528913fc1`
-   - `libgallium-26.3.0-devel.so`: `9da905ef314e3362631406b1d85e013071b7fc80661cb663c7c40920d23eef85`
+   - `libgallium-26.3.0-devel.so`: `75f3c3fcd229387557d4649af9eee293ac485feeaea1904e48649370565b6b5f`
 
-   OSMesa remains the conservative default and independent software fallback;
-   FW 11.60 replay is deferred until that endpoint is available.
+   OSMesa remains the conservative default and independent software fallback.
 7. Do not package `glonagc` until it uses Mesa Gallium interfaces and passes
    upstream hardware validation.
 

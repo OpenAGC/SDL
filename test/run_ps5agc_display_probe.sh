@@ -51,6 +51,7 @@ expected_error=${SDL_PS5AGC_EXPECT_ERROR:-}
 skip_build=${SDL_PS5AGC_SKIP_BUILD:-0}
 build_jobs=${SDL_PS5AGC_BUILD_JOBS:-4}
 klog_port=${SDL_PS5AGC_KLOG_PORT:-3232}
+allow_no_klog=${SDL_PS5AGC_ALLOW_NO_KLOG:-0}
 pyps4debug_dir=${PYPS4DEBUG_DIR:-/Users/bizkut/Downloads/PS5/homebrew/PyPS4debug}
 killer=${PS5DEBUG_KILLER:-$repo_dir/../Vulkan-PS5/examples/ps5debug_kill_process.py}
 log_dir=${SDL_PS5AGC_LOG_DIR:-${TMPDIR:-/tmp}/sdl-ps5agc-qualification}
@@ -184,6 +185,10 @@ case "$skip_build" in
         echo "SDL_PS5AGC_SKIP_BUILD must be 0 or 1" >&2
         exit 2
         ;;
+esac
+case "$allow_no_klog" in
+    0|1) ;;
+    *) echo "SDL_PS5AGC_ALLOW_NO_KLOG must be 0 or 1" >&2; exit 2 ;;
 esac
 case "$build_jobs" in
     ''|*[!0-9]*|0*)
@@ -406,31 +411,41 @@ if [ "$launch_status" -ne 0 ]; then
     echo "display probe launch failed with curl status $launch_status; log: $log" >&2
     exit 1
 fi
-if [ ! -s "$klog" ]; then
+have_klog=0
+target_pid=unavailable
+if [ -s "$klog" ]; then
+    have_klog=1
+    target_pid=$(latest_eboot_pid "$klog")
+    if [ -z "$target_pid" ]; then
+        if [ "$allow_no_klog" = 1 ]; then
+            have_klog=0
+            target_pid=unavailable
+        else
+            wait_eboot_absent || true
+            echo "klog did not identify the display probe PID: $klog" >&2
+            exit 1
+        fi
+    fi
+fi
+if [ "$have_klog" = 1 ]; then
+    target_exec_line=$(grep -n "^<${target_pid}> EXEC /app0/eboot\.bin " "$klog" |
+        tail -n 1 | cut -d: -f1)
+    sed -n "${target_exec_line},\$p" "$klog" >"$target_klog"
+    target_pid_hex=$(printf '%x' "$target_pid")
+    if grep -Eq \
+        "# proc ID: *${target_pid}$|mDBG: Sending signal\(pid: *${target_pid},|App Crash : PID=0x0*${target_pid_hex}([^0-9a-f]|$)|SYSTEM_XO_VIOLATION" \
+        "$target_klog" ||
+       grep -Eq '=== Reset GFX queue|#### GPU reset sequence starts' \
+        "$target_klog" ||
+       grep -Eq 'PowerManager\.RequestStateChange state:(Reboot|Shutdown)|Start SystemReboot|Start SystemShutdown' \
+        "$target_klog"; then
+        wait_eboot_absent || true
+        echo "display probe hit a fatal, GPU-reset, or system power event: $target_klog" >&2
+        exit 1
+    fi
+elif [ ! -s "$klog" ] && [ "$allow_no_klog" != 1 ]; then
     wait_eboot_absent || true
     echo "display probe completed but klog capture failed: $klog" >&2
-    exit 1
-fi
-
-target_pid=$(latest_eboot_pid "$klog")
-if [ -z "$target_pid" ]; then
-    wait_eboot_absent || true
-    echo "klog did not identify the display probe PID: $klog" >&2
-    exit 1
-fi
-target_exec_line=$(grep -n "^<${target_pid}> EXEC /app0/eboot\.bin " "$klog" |
-    tail -n 1 | cut -d: -f1)
-sed -n "${target_exec_line},\$p" "$klog" >"$target_klog"
-target_pid_hex=$(printf '%x' "$target_pid")
-if grep -Eq \
-    "# proc ID: *${target_pid}$|mDBG: Sending signal\(pid: *${target_pid},|App Crash : PID=0x0*${target_pid_hex}([^0-9a-f]|$)|SYSTEM_XO_VIOLATION" \
-    "$target_klog" ||
-   grep -Eq '=== Reset GFX queue|#### GPU reset sequence starts' \
-    "$target_klog" ||
-   grep -Eq 'PowerManager\.RequestStateChange state:(Reboot|Shutdown)|Start SystemReboot|Start SystemShutdown' \
-    "$target_klog"; then
-    wait_eboot_absent || true
-    echo "display probe hit a fatal, GPU-reset, or system power event: $target_klog" >&2
     exit 1
 fi
 
@@ -534,29 +549,34 @@ else
         exit 1
     fi
 fi
-self_kill_line=$(grep -n 'KillApp() appId=' "$target_klog" |
-    tail -n 1 | cut -d: -f1 || true)
-all_exited_line=$(grep -n '\[AppMgr\] All processes exited' "$target_klog" |
-    tail -n 1 | cut -d: -f1 || true)
-if [ -z "$self_kill_line" ] || [ -z "$all_exited_line" ] ||
-   [ "$all_exited_line" -le "$self_kill_line" ]; then
-    wait_eboot_absent || true
-    echo "display probe lifecycle evidence is incomplete: $target_klog" >&2
-    exit 1
-fi
-warning='[KERNEL] WARNING: VM resource leak: set:1, res:0, amount:0x4000'
-warning_count=$(grep -Fxc "$warning" "$target_klog" || true)
-if grep -F '[KERNEL] WARNING:' "$target_klog" | grep -Fvx "$warning" \
-    >/dev/null || [ "$warning_count" -gt 1 ]; then
-    wait_eboot_absent || true
-    echo "display probe produced an unexpected kernel warning: $target_klog" >&2
-    exit 1
+if [ "$have_klog" = 1 ]; then
+    self_kill_line=$(grep -n 'KillApp() appId=' "$target_klog" |
+        tail -n 1 | cut -d: -f1 || true)
+    all_exited_line=$(grep -n '\[AppMgr\] All processes exited' "$target_klog" |
+        tail -n 1 | cut -d: -f1 || true)
+    if [ -z "$self_kill_line" ] || [ -z "$all_exited_line" ] ||
+       [ "$all_exited_line" -le "$self_kill_line" ]; then
+        wait_eboot_absent || true
+        echo "display probe lifecycle evidence is incomplete: $target_klog" >&2
+        exit 1
+    fi
+    warning='[KERNEL] WARNING: VM resource leak: set:1, res:0, amount:0x4000'
+    warning_count=$(grep -Fxc "$warning" "$target_klog" || true)
+    if grep -F '[KERNEL] WARNING:' "$target_klog" | grep -Fvx "$warning" \
+        >/dev/null || [ "$warning_count" -gt 1 ]; then
+        wait_eboot_absent || true
+        echo "display probe produced an unexpected kernel warning: $target_klog" >&2
+        exit 1
+    fi
 fi
 wait_eboot_absent
 if ! curl -sS --connect-timeout 3 --max-time 5 \
     "http://${PS5_HOST}:8080/" >/dev/null; then
     echo "display probe exited but WebSrv became unreachable" >&2
     exit 1
+fi
+if [ "$have_klog" = 0 ]; then
+    echo "ps5agc display probe: NO_KLOG_PROCESS_ABSENCE"
 fi
 
 if [ "$expect_failure" -eq 1 ]; then
@@ -587,4 +607,8 @@ else
     fi
 fi
 echo "log: $log"
-echo "klog: $target_klog"
+if [ "$have_klog" = 1 ]; then
+    echo "klog: $target_klog"
+else
+    echo "klog unavailable or unattributable: $klog"
+fi
