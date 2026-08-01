@@ -43,21 +43,21 @@ int main(int argc, char **argv)
     Uint8 pixel[4] = { 0, 0, 0, 0 };
     int result = 1;
 
-    if ((argc == 2 || argc == 3) &&
+    if ((argc == 2 || argc == 3 || argc == 4) &&
         SDL_strncmp(argv[1], "--egl=", 6) == 0 && argv[1][6]) {
         if (SDL_setenv("SDL_VIDEO_EGL_DRIVER", argv[1] + 6, 1) != 0) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "ps5-zink: could not set EGL path");
             goto done;
         }
-        if (argc == 3 &&
+        if (argc >= 3 &&
             (SDL_strncmp(argv[2], "--vulkan=", 9) != 0 || !argv[2][9] ||
              SDL_setenv("ZINK_VULKAN_LIBRARY", argv[2] + 9, 1) != 0)) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "ps5-zink: invalid Vulkan library path");
             goto done;
         }
-        if (argc == 3) {
+        if (argc >= 3) {
             vulkan_library = SDL_LoadObject(argv[2] + 9);
             if (!vulkan_library ||
                 !SDL_LoadFunction(vulkan_library, "vkGetInstanceProcAddr") ||
@@ -69,10 +69,17 @@ int main(int argc, char **argv)
             }
             SDL_Log("ps5-zink: Vulkan library preflight PASS");
         }
+        if (argc == 4 &&
+            (SDL_strcmp(argv[3], "--record-only") != 0 ||
+             SDL_setenv("VULKAN_PS5_RECORD_ONLY", "1", 1) != 0)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "ps5-zink: invalid record-only option");
+            goto done;
+        }
     } else if (argc != 1) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "usage: testps5zink [--egl=/absolute/libEGL.so.1 "
-                     "--vulkan=/absolute/libvulkan_ps5.so]");
+                     "--vulkan=/absolute/libvulkan_ps5.so [--record-only]]");
         goto done;
     }
     if (SDL_setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1) != 0 ||
@@ -129,6 +136,12 @@ int main(int argc, char **argv)
                      "ps5-zink: unexpected renderer: %s",
                      renderer ? (const char *)renderer : "(null)");
         goto done;
+    }
+
+    /* Mesa's legacy-context setup may probe GL_MAJOR_VERSION, which is not a
+       valid query for the requested GL 2.1 context. Do not let that harmless
+       setup error contaminate the rendering/readback oracle below. */
+    while (p_glGetError() != GL_NO_ERROR) {
     }
 
     p_glViewport(0, 0, 64, 64);

@@ -34,6 +34,11 @@ elf=${SDL_PS5AGC_PROBE_ELF:-$default_elf}
 bmp=${SDL_PS5AGC_PROBE_BMP:-$build_dir/test/testyuv.bmp}
 websrv_timeout=${SDL_PS5AGC_WEBSRV_TIMEOUT:-30}
 probe_frames=${SDL_PS5AGC_PROBE_FRAMES:-1}
+zink_record_only=${SDL_PS5_ZINK_RECORD_ONLY:-0}
+case "$zink_record_only" in
+    0|1) ;;
+    *) echo "SDL_PS5_ZINK_RECORD_ONLY must be 0 or 1" >&2; exit 2 ;;
+esac
 recreate_count=${SDL_PS5AGC_RECREATE_COUNT:-8}
 texture_churn_count=${SDL_PS5AGC_TEXTURE_CHURN_COUNT:-32}
 probe_renderer=${SDL_PS5AGC_PROBE_RENDERER:-ps5agc}
@@ -54,6 +59,8 @@ mesa_stage=${SDL_PS5_ZINK_MESA_STAGE:-$repo_dir/../mesa/build-prospero-zink-stag
 zink_egl=${SDL_PS5_ZINK_EGL:-$mesa_stage/libEGL.so.1.0.0}
 zink_gallium=${SDL_PS5_ZINK_GALLIUM:-$mesa_stage/libgallium-26.3.0-devel.so}
 zink_vulkan=${SDL_PS5_ZINK_VULKAN:-$repo_dir/../Vulkan-PS5/build-prospero-zink-icd/libvulkan_ps5.so}
+zink_icd_verifier=${SDL_PS5_ZINK_ICD_VERIFIER:-$repo_dir/../Vulkan-PS5/tests/check_prospero_icd.py}
+zink_readelf=${SDL_PS5_ZINK_READELF:-/opt/homebrew/opt/llvm@18/bin/llvm-readelf}
 
 if [ -z "$expected_renderer" ]; then
     if [ "$probe_renderer" = auto ]; then
@@ -205,6 +212,21 @@ if [ "$probe_kind" = zink ]; then
             exit 2
         fi
     done
+    if [ ! -f "$zink_icd_verifier" ] || ! command -v python3 >/dev/null 2>&1; then
+        echo "python3 and the Prospero ICD verifier are required for zink probes" >&2
+        exit 2
+    fi
+    if [ ! -x "$zink_readelf" ]; then
+        if command -v llvm-readelf >/dev/null 2>&1; then
+            zink_readelf=$(command -v llvm-readelf)
+        elif command -v readelf >/dev/null 2>&1; then
+            zink_readelf=$(command -v readelf)
+        else
+            echo "llvm-readelf or readelf is required for zink probes" >&2
+            exit 2
+        fi
+    fi
+    python3 "$zink_icd_verifier" "$zink_readelf" "$zink_vulkan"
 fi
 if [ "$skip_build" -eq 0 ] && [ "$elf" = "$default_elf" ]; then
     if ! command -v cmake >/dev/null 2>&1; then
@@ -317,6 +339,9 @@ elif [ "$probe_kind" = failure ]; then
     probe_args="--failure ${failure_point}"
 elif [ "$probe_kind" = zink ]; then
     probe_args="--egl=${remote_dir}/libEGL.so.1 --vulkan=${remote_dir}/libvulkan_ps5.so"
+    if [ "$zink_record_only" = 1 ]; then
+        probe_args="${probe_args} --record-only"
+    fi
 elif [ "$probe_kind" = standalone ]; then
     case "$standalone_target" in
         testgeometry)
