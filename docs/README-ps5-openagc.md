@@ -134,14 +134,16 @@ yet a replacement for the qualified `ps5agc` presentation path.
    explicitly with `SDL_HINT_PS5_OPENGL_DRIVER=zink`; missing or malformed
    selection fails closed.
 6. The native-window bridge is FW 5.500.008-qualified. Two immediate guarded
-   runs (`20260801T032341Z` and `20260801T032359Z`) created the real Zink EGL
+   depth-clip release-candidate runs (`20260801T043729Z` and
+   `20260801T043745Z`) created the real Zink EGL
    context, returned exact RGBA `64,128,191,255`, presented, released every
-   OpenAGC child, self-exited, and relaunched without reboot. The Vulkan-PS5
-   generic suite passes 46/46 and its shared-ICD verifier reports 204 exports
-   with only supported dynamic relocations. The tested hashes are:
+   OpenAGC child, self-exited, and relaunched without reboot. Neither log
+   contains Mesa's former `VK_EXT_depth_clip_enable` warning. The Vulkan-PS5
+   generic and ASan/UBSan suites pass 47/47 and its shared-ICD verifier reports
+   204 exports with only supported dynamic relocations. The tested hashes are:
 
    - `testps5zink`: `95da10acf89da3e35865890874034b8bffef1c563417309a0e4bb98404540ad9`
-   - `libvulkan_ps5.so`: `f2f2a176d0dc4dcb14942471af41d9fa6eebdeaba134084a52de280932b71f52`
+   - `libvulkan_ps5.so`: `a0b52105b1ab1806553fa0777991e78f57545ba2d0d550cbf3b6d2f83bd341c7`
    - `libEGL.so.1.0.0`: `0d2922b30b3dbbe25f060331043bb4a4732272d0813023568381306528913fc1`
    - `libgallium-26.3.0-devel.so`: `9da905ef314e3362631406b1d85e013071b7fc80661cb663c7c40920d23eef85`
 
