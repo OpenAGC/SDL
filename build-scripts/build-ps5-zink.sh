@@ -2,7 +2,7 @@
 
 set -eu
 
-MESA_REVISION=ffaa6a756025e11f91c4321b79e0fbaffcdff1a8
+MESA_REVISION=ba27d457971d7621f239b0e0a76b98f59ce533b0
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SDL_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 MESA_SOURCE=${MESA_SOURCE:-"${SDL_ROOT}/../mesa"}

@@ -16,8 +16,16 @@
 
 static int PS5_EGL_LoadLibrary(_THIS, const char *path)
 {
-    return SDL_EGL_LoadLibrary(_this, path, EGL_DEFAULT_DISPLAY,
-                               EGL_PLATFORM_SURFACELESS_MESA);
+    int result = SDL_EGL_LoadLibrary(_this, path, EGL_DEFAULT_DISPLAY,
+                                     EGL_PLATFORM_SURFACELESS_MESA);
+
+    if (result == 0) {
+        /* The Prospero surfaceless platform supplies a narrow native-window
+         * bridge through Kopper. Require its window-capable configs instead
+         * of allowing SDL_EGL_ChooseConfig() to select a pbuffer-only one. */
+        _this->egl_data->egl_surfacetype = EGL_WINDOW_BIT;
+    }
+    return result;
 }
 
 static SDL_GLContext PS5_EGL_CreateContext(_THIS, SDL_Window *window)

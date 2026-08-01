@@ -412,6 +412,11 @@ static int PS5_CreateWindow(_THIS, SDL_Window *window)
         if (window_data->egl_surface == EGL_NO_SURFACE) {
             SDL_free(window_data);
             window->driverdata = NULL;
+            /* SDL_EGL_CreateSurface() records the EGL implementation's
+             * precise failure. Preserve it for the guarded hardware log. */
+            if (*SDL_GetError()) {
+                return -1;
+            }
             return SDL_SetError("Could not create PS5 Zink EGL surface");
         }
     }
